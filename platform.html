@@ -1,0 +1,734 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>  
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Retro Platformer</title>
+    <style>
+        /* Custom retro/pixel font */
+        @import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap');
+/* turrets 488-512 */
+/* player and progectile logic 86-91 */
+        body {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            margin: 0;
+            background-color: #0d1b2a; /* Dark blue background */
+            font-family: 'Press Start 2P', cursive;
+            color: #e0fbfc; /* Light cyan text */
+            padding: 10px;
+        }
+
+        #game-container {
+            border: 5px solid #ffc300; /* Gold border */
+            box-shadow: 0 0 20px rgba(255, 195, 0, 0.7); /* Glow effect */
+            background-color: #2b3a55; /* Slightly lighter game background */
+            border-radius: 10px;
+            overflow: hidden;
+        }
+
+        canvas {
+            display: block;
+        }
+
+        .game-info {
+            width: 100%;
+            max-width: 600px;
+            text-align: center;
+            margin-bottom: 10px;
+            font-size: 0.8rem;
+        }
+
+        .controls {
+            margin-top: 20px;
+            text-align: center;
+            font-size: 0.8rem;
+            line-height: 1.5;
+            color: #ade8f4;
+        }
+
+        .controls b {
+            color: #ff9800;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="game-info">
+        <div id="status-message" style="color: #48e42f;">Use controls to reach the gem!</div>
+    </div>
+
+    <div id="game-container">
+        <canvas id="gameCanvas"></canvas>
+    </div>
+
+    <div class="controls">
+        Move: <b>&larr;</b> & <b>&rarr;</b> | Jump: <b>&uarr;</b>/W/Space | Wall Jump Enabled! | Reset: <b>R</b>
+    </div>
+
+    <script>
+        // --- Setup ---
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const STATUS_MESSAGE = document.getElementById('status-message');
+
+        const GAME_WIDTH = 600;
+        const GAME_HEIGHT = 400;
+        const GROUND_HEIGHT = 10; // Height of the main ground platform
+        const WALL_THICKNESS = 10; // Thickness of the new side walls
+
+        canvas.width = GAME_WIDTH;
+        canvas.height = GAME_HEIGHT;
+
+        // Physics Constants
+        const GRAVITY = 0.4;
+        const PLAYER_MOVE_SPEED = 5;
+        const JUMP_VELOCITY = -10;
+        const WALL_JUMP_X_VELOCITY = 8; // Horizontal push for wall jump
+        const PROJECTILE_SPEED = 10; // Speed of the moving laser beam
+
+        // ** JUMP MECHANICS CONSTANTS **
+        const COYOTE_TIME_MAX = 100; // ms: Time player can still jump after leaving a platform
+        const JUMP_BUFFER_MAX = 100; // ms: Time jump input is remembered before landing
+
+        // Game State
+        let gameRunning = false;
+        let keys = {};
+
+        // --- Game Objects ---
+
+        // Player Class
+        class Player {
+            constructor(x, y) {
+                this.x = x;
+                this.y = y;
+                this.width = 25;
+                this.height = 25;
+                this.vx = 0; // velocity x
+                this.vy = 0; // velocity y
+                this.onGround = true;
+                this.onWall = false; // tracks if touching a wall side
+                this.wallSide = 0;   // -1 if wall is on left, 1 if wall is on right
+                this.color = '#ff9800'; // Orange
+
+                // New properties for responsive jumping
+                this.coyoteTimeCounter = 0; // ms
+                this.jumpBufferCounter = 0; // ms
+            }
+
+            // AABB (Axis-Aligned Bounding Box) collision check
+            getBounds() {
+                return {
+                    left: this.x,
+                    right: this.x + this.width,
+                    top: this.y,
+                    bottom: this.y + this.height
+                };
+            }
+
+            draw() {
+                ctx.fillStyle = this.color;
+                ctx.fillRect(this.x, this.y, this.width, this.height);
+            }
+
+            // Updated to accept deltaTime for time-based counter management
+            update(deltaTime) {
+                if (!gameRunning) return;
+
+                // 1. Manage Counters (Jump Buffering & Coyote Time)
+                this.jumpBufferCounter = Math.max(0, this.jumpBufferCounter - deltaTime);
+
+                if (this.onGround) {
+                    this.coyoteTimeCounter = COYOTE_TIME_MAX;
+                } else {
+                    this.coyoteTimeCounter = Math.max(0, this.coyoteTimeCounter - deltaTime);
+                }
+
+                // 2. Horizontal Movement (handling wall jump momentum decay)
+                const isWallJumpMomentum = Math.abs(this.vx) > PLAYER_MOVE_SPEED * 1.5; 
+
+                if (isWallJumpMomentum) {
+                    // Decay high wall-jump velocity slowly
+                    this.vx *= 0.9;
+                } else {
+                    // Player controls or neutral
+                    this.vx = 0;
+                    if ((keys['ArrowLeft'] || keys['KeyA']) && this.x > 0) {
+                        this.vx = -PLAYER_MOVE_SPEED;
+                    }
+                    if ((keys['ArrowRight'] || keys['KeyD']) && this.x < GAME_WIDTH - this.width) {
+                        this.vx = PLAYER_MOVE_SPEED;
+                    }
+                }
+
+                // 3. Apply Gravity
+                if (!this.onGround) {
+                    this.vy += GRAVITY;
+                }
+
+                this.x += this.vx;
+                this.y += this.vy;
+
+                // Reset states *before* collision checks in checkPlatformCollision
+                this.onGround = false;
+                this.onWall = false; 
+                this.wallSide = 0;
+
+                // --- Canvas Edge Boundary Check (Existing Logic for Wall Jump) ---
+                const isPlayerMidAir = this.y + this.height < GAME_HEIGHT - GROUND_HEIGHT;
+
+                // Check Left Boundary
+                if (this.x < 0) {
+                    this.x = 0; // Clamp
+                    if (isPlayerMidAir) { 
+                        this.onWall = true;
+                        this.wallSide = -1; // Wall on left side of player (push right to jump)
+                    }
+                } 
+
+                // Check Right Boundary
+                else if (this.x + this.width > GAME_WIDTH) {
+                    this.x = GAME_WIDTH - this.width; // Clamp
+                    if (isPlayerMidAir) { 
+                        this.onWall = true;
+                        this.wallSide = 1; // Wall on right side of player (push left to jump)
+                    }
+                }
+            }
+
+            // Function handles both ground, coyote, and wall jumps
+            jump() {
+                if (!gameRunning) return;
+
+                // Ground Jump (using coyote time for responsiveness)
+                if (this.onGround || this.coyoteTimeCounter > 0) {
+                    this.vy = JUMP_VELOCITY;
+                    this.onGround = false;
+                    this.coyoteTimeCounter = 0;
+                    this.jumpBufferCounter = 0;
+                    return;
+                }
+
+                // Wall Jump 
+                if (this.onWall) {
+                    this.vy = JUMP_VELOCITY; // Vertical boost
+
+                    // Horizontal boost away from the wall
+                    this.vx = -this.wallSide * WALL_JUMP_X_VELOCITY; 
+
+                    this.onWall = false; 
+                    this.wallSide = 0;
+                    this.jumpBufferCounter = 0; 
+                    return;
+                }
+
+                // If no jump condition met, buffer the input
+                this.jumpBufferCounter = JUMP_BUFFER_MAX;
+            }
+        }
+
+        // Platform Class
+        class Platform {
+            constructor(x, y, w, h) {
+                this.x = x;
+                this.y = y;
+                this.width = w;
+                this.height = h;
+                this.color = '#48e42f'; // Neon green
+            }
+
+            draw() {
+                ctx.fillStyle = this.color;
+                ctx.fillRect(this.x, this.y, this.width, this.height);
+            }
+        }
+
+        // Collectible Class (Gem)
+        class Collectible {
+            constructor(x, y) {
+                this.x = x;
+                this.y = y;
+                this.size = 20;
+                this.color = '#00ffff'; // Cyan
+                this.collected = false;
+            }
+
+            draw() {
+                if (!this.collected) {
+                    ctx.fillStyle = this.color;
+                    // Draw a simple gem shape (small diamond)
+                    ctx.beginPath();
+                    ctx.moveTo(this.x + this.size / 2, this.y);
+                    ctx.lineTo(this.x + this.size, this.y + this.size / 2);
+                    ctx.lineTo(this.x + this.size / 2, this.y + this.size);
+                    ctx.lineTo(this.x, this.y + this.size / 2);
+                    ctx.closePath();
+                    ctx.fill();
+
+                    // Add a glow
+                    ctx.shadowBlur = 10;
+                    ctx.shadowColor = this.color;
+                }
+            }
+        }
+
+        // --- Projectile Class (The moving laser beam) ---
+        class Projectile {
+            constructor(x, y, angle) {
+                this.x = x;
+                this.y = y;
+                this.radius = 5;
+                this.color = '#ff4500'; // Red-Orange
+
+                // Calculate velocity based on angle
+                this.vx = Math.cos(angle) * PROJECTILE_SPEED;
+                this.vy = Math.sin(angle) * PROJECTILE_SPEED;
+
+                this.isDead = false;
+            }
+
+            update() {
+                this.x += this.vx;
+                this.y += this.vy;
+
+                // Check if the projectile is off-screen
+                if (this.x < 0 || this.x > GAME_WIDTH || this.y < 0 || this.y > GAME_HEIGHT) {
+                    this.isDead = true;
+                }
+            }
+
+            draw() {
+                ctx.fillStyle = this.color;
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Add a glow
+                ctx.shadowBlur = 10;
+                ctx.shadowColor = this.color;
+                ctx.shadowOffsetX = 0;
+                ctx.shadowOffsetY = 0;
+            }
+        }
+
+
+        // --- Turret Class (Shoots Projectiles and now MOVES) ---
+        class Turret {
+            // Updated constructor to include minY and maxY for vertical patrolling
+            constructor(x, y, angle = 0, minX = x, maxX = x, minY = y, maxY = y, moveSpeed = 0) { 
+                this.x = x;
+                this.y = y;
+                this.angle = angle; // Rotation angle for firing direction
+                this.width = 30;
+                this.height = 10;
+                this.color = '#7f0000'; // Dark Red Turret Body
+
+                this.fireCooldown = 2000; // 2 seconds between shots
+                this.timeUntilNextShot = 0; // Start ready to fire
+
+                // Movement properties
+                this.minX = minX;
+                this.maxX = maxX;
+                this.minY = minY; 
+                this.maxY = maxY; 
+                this.moveSpeed = moveSpeed; // pixels per second
+
+                this.isMovingX = this.minX !== this.maxX; // Check if horizontal movement is defined
+                this.isMovingY = this.minY !== this.maxY; // Check if vertical movement is defined
+
+                // Only allow one axis of movement for simplicity
+                if (this.isMovingX && this.isMovingY) {
+                    this.isMovingY = false;
+                }
+
+                if (this.isMovingX) {
+                    this.directionX = 1; // 1 = right, -1 = left
+                } else if (this.isMovingY) {
+                    this.directionY = 1; // 1 = down (Y increases), -1 = up
+                }
+            }
+
+            // Calculates the starting position for the projectile
+            getMuzzlePosition() {
+                const center = { x: this.x + this.width / 2, y: this.y + this.height / 2 };
+
+                // Offset from the center of the turret body to the firing edge
+                const offset = this.width / 2 + 5; 
+
+                const dx = Math.cos(this.angle);
+                const dy = Math.sin(this.angle);
+
+                return {
+                    x: center.x + offset * dx,
+                    y: center.y + offset * dy
+                };
+            }
+
+            // Updates the timer, moves the turret, and fires a projectile if ready
+            update(deltaTime, projectiles) {
+                // 1. Movement Logic (Patrolling)
+                const deltaMovement = (this.moveSpeed * deltaTime) / 1000; // Distance moved in this frame
+
+                // Horizontal Movement
+                if (this.isMovingX) {
+                    this.x += deltaMovement * this.directionX;
+
+                    // Check boundaries and reverse direction
+                    if (this.directionX === 1 && this.x + this.width >= this.maxX) {
+                        this.x = this.maxX - this.width; // Clamp
+                        this.directionX = -1; // Reverse to left
+                    } else if (this.directionX === -1 && this.x <= this.minX) {
+                        this.x = this.minX; // Clamp
+                        this.directionX = 1; // Reverse to right
+                    }
+                }
+
+                // Vertical Movement
+                if (this.isMovingY) {
+                    this.y += deltaMovement * this.directionY;
+
+                    // Check boundaries and reverse direction
+                    if (this.directionY === 1 && this.y + this.height >= this.maxY) {
+                        this.y = this.maxY - this.height; // Clamp
+                        this.directionY = -1; // Reverse to up
+                    } else if (this.directionY === -1 && this.y <= this.minY) {
+                        this.y = this.minY; // Clamp
+                        this.directionY = 1; // Reverse to down
+                    }
+                }
+
+
+                // 2. Firing Logic
+                this.timeUntilNextShot -= deltaTime;
+
+                if (this.timeUntilNextShot <= 0) {
+                    const muzzle = this.getMuzzlePosition();
+
+                    // Create and add new projectile
+                    const newProjectile = new Projectile(muzzle.x, muzzle.y, this.angle);
+                    projectiles.push(newProjectile);
+
+                    this.timeUntilNextShot = this.fireCooldown; // Reset timer
+                }
+            }
+
+            draw() {
+                const cx = this.x + this.width / 2;
+                const cy = this.y + this.height / 2;
+
+                ctx.save();
+                ctx.translate(cx, cy);
+                ctx.rotate(this.angle);
+                ctx.translate(-cx, -cy);
+
+                // Draw Turret body (drawn relative to its current calculated position)
+                ctx.fillStyle = this.color;
+                ctx.fillRect(this.x, this.y, this.width, this.height);
+
+                // Draw a muzzle indicator (small yellow dot at the firing end)
+                ctx.fillStyle = '#ffc300'; 
+                ctx.beginPath();
+                ctx.arc(this.x + this.width + 5, this.y + this.height / 2, 4, 0, Math.PI * 2);
+                ctx.fill();
+
+                ctx.restore(); 
+                ctx.shadowBlur = 0; 
+            }
+        }
+
+        // --- Level Data and Initialization ---
+
+        let platforms = [];
+        let collectible;
+        let player;
+        let turrets = []; 
+        let projectiles = []; // Array to hold active moving projectiles
+        let lastTime = 0;
+
+        function initializeGame() {
+            // Reset game state
+            gameRunning = true;
+            STATUS_MESSAGE.textContent = 'Active...';
+            STATUS_MESSAGE.style.color = '#b2ff59';
+            keys = {};
+
+            player = new Player(50, GAME_HEIGHT - 50); 
+
+            // Clear previous arrays
+            platforms = [];
+            turrets = [];
+            projectiles = []; 
+
+            // Define platforms (x, y, width, height)
+            platforms.push(
+                // Ground
+                new Platform(0, GAME_HEIGHT - GROUND_HEIGHT, GAME_WIDTH, GROUND_HEIGHT), 
+
+                // ** NEW: Left Wall for Wall Jump **
+                new Platform(0, 0, WALL_THICKNESS, GAME_HEIGHT - GROUND_HEIGHT),
+                // ** NEW: Right Wall for Wall Jump **
+                new Platform(GAME_WIDTH - WALL_THICKNESS, 0, WALL_THICKNESS, GAME_HEIGHT - GROUND_HEIGHT),
+
+                // Level 1 Platform
+                new Platform(50, GAME_HEIGHT - 80, 150, 15),
+                // Level 2 Platform
+                new Platform(300, GAME_HEIGHT - 150, 200, 15),
+                // Top Platform
+                new Platform(100, GAME_HEIGHT - 250, 100, 15),
+                // Horizontal Moving Turret Platform
+                new Platform(300, GAME_HEIGHT - 300, 300, 15)
+            );
+
+            // Define collectible position
+            collectible = new Collectible(450, GAME_HEIGHT - 175);
+
+            // Add Turrets
+            turrets.push(
+                // Turret 1: Fires DOWN (90 degrees or Math.PI / 2 radians) - Static - FLOATING ABOVE LEVEL 2 PLATFORM
+                new Turret(370, GAME_HEIGHT - 150 - 10 - 50, Math.PI / 2),
+
+                // Turret 2: Fires RIGHT (0 degrees or 0 radians) from the top platform - Static
+                new Turret(100, GAME_HEIGHT - 250 - 10, 0),
+
+                // Turret 3: Fires Left/Down diagonally (Math.PI * 1.25) - Static (on first jump platform)
+                new Turret(250, GAME_HEIGHT - 80 - 10, Math.PI * 1.25),
+
+                // Turret 4: MOVING HORIZONTAL: Fires LEFT (Math.PI radians)
+                // x, y, angle, minX, maxX, minY, maxY, moveSpeed
+                new Turret(550, GAME_HEIGHT - 300 - 10, Math.PI, 300, 570, GAME_HEIGHT - 300 - 10, GAME_HEIGHT - 300 - 10, 50),
+
+                // Turret 5: MOVING VERTICAL (now floating): Fires RIGHT (0 radians)
+                // x, y, angle, minX, maxX, minY, maxY, moveSpeed
+                new Turret(0, 250, 0, 0, 0, 50, GAME_HEIGHT - 120, 40), 
+
+                // ** NEW: Turret 6: MOVING VERTICAL on the right side - Fires LEFT (Math.PI radians) **
+                // Note: MaxX is adjusted for the right wall thickness
+                new Turret(GAME_WIDTH - WALL_THICKNESS - 30, 150, Math.PI, 
+                           GAME_WIDTH - WALL_THICKNESS - 30, GAME_WIDTH - WALL_THICKNESS - 30, 
+                           50, GAME_HEIGHT - 120, 40)
+            );
+
+            // Start the game loop
+            requestAnimationFrame(gameLoop);
+        }
+
+        // --- Collision and Physics Logic ---
+
+        function checkPlatformCollision() {
+            platforms.forEach(p => {
+                const pBounds = {
+                    left: p.x, right: p.x + p.width,
+                    top: p.y, bottom: p.y + p.height
+                };
+                const playerBounds = player.getBounds();
+
+                // 1. General Overlap Check
+                if (
+                    playerBounds.right > pBounds.left && playerBounds.left < pBounds.right &&
+                    playerBounds.bottom > pBounds.top && playerBounds.top < pBounds.bottom
+                ) {
+                    // --- Vertical Collision (Top/Bottom) ---
+                    const previousBottom = playerBounds.bottom - player.vy; 
+                    const previousTop = playerBounds.top - player.vy;     
+
+                    // Check if player's Y movement brought them into the platform
+                    // Use a small buffer (1px) to prevent vertical collision from being mistaken for side collision
+                    const y_axis_alignment = playerBounds.right > pBounds.left + 1 && playerBounds.left < pBounds.right - 1;
+
+                    // Landing on TOP of platform
+                    if (player.vy >= 0 && previousBottom <= pBounds.top && y_axis_alignment) {
+                        player.y = pBounds.top - player.height; // Set player exactly on top
+                        player.vy = 0; // Stop vertical movement
+                        player.onGround = true;
+                        // IMPORTANT: return here to prevent side collision logic from overwriting onGround
+                        return; 
+                    } 
+
+                    // Hitting BOTTOM of platform
+                    else if (player.vy < 0 && previousTop >= pBounds.bottom && y_axis_alignment) {
+                        player.y = pBounds.bottom;
+                        player.vy = 0;
+                        return; // Stop checking other collisions for this platform
+                    }
+
+                    // --- Horizontal/Side Collision (Wall Stickiness) ---
+                    // Only check for wall stickiness if NOT grounded and NOT hitting top/bottom
+                    if (!player.onGround) {
+
+                        const previousRight = playerBounds.right - player.vx;
+                        const previousLeft = playerBounds.left - player.vx;
+
+                        // Hitting LEFT side of platform (moving right)
+                        if (player.vx > 0 && previousRight <= pBounds.left) {
+                            player.x = pBounds.left - player.width; // Clamp position
+                            player.vx = 0;
+                            player.onWall = true;
+                            player.wallSide = 1; // Wall is on the player's right
+                        } 
+
+                        // Hitting RIGHT side of platform (moving left)
+                        else if (player.vx < 0 && previousLeft >= pBounds.right) {
+                            player.x = pBounds.right; // Clamp position
+                            player.vx = 0;
+                            player.onWall = true;
+                            player.wallSide = -1; // Wall is on the player's left
+                        }
+                    }
+                }
+            });
+        }
+
+        function checkCollectibleCollision() {
+            if (collectible.collected) return;
+
+            const pBounds = player.getBounds();
+
+            // Collectible Bounds (simplified for the diamond shape)
+            const cBounds = {
+                left: collectible.x,
+                right: collectible.x + collectible.size,
+                top: collectible.y,
+                bottom: collectible.y + collectible.size
+            };
+
+            // AABB Collision Check
+             if (pBounds.right > cBounds.left &&
+                pBounds.left < cBounds.right &&
+                pBounds.bottom > cBounds.top &&
+                pBounds.top < cBounds.bottom) {
+
+                collectible.collected = true;
+                gameOver('You Win! Press R to play again.');
+            }
+        }
+
+        // --- Projectile Collision Check ---
+        function checkProjectileCollision() {
+            if (!gameRunning) return;
+
+            const pBounds = player.getBounds();
+
+            for (let i = 0; i < projectiles.length; i++) {
+                const proj = projectiles[i];
+
+                // Simple circular projectile collision against player AABB
+                // Check if the distance between player center and projectile center is less than player size + projectile radius
+                const dx = pBounds.left + player.width / 2 - proj.x;
+                const dy = pBounds.top + player.height / 2 - proj.y;
+                const distanceSq = dx * dx + dy * dy;
+
+                // Approximation: if distance is less than (player half width + projectile radius) squared, it's a hit.
+                const collisionThresholdSq = (player.width / 2 + proj.radius) ** 2;
+
+
+                if (distanceSq < collisionThresholdSq) {
+                    proj.isDead = true; // Mark projectile for removal
+                    gameOver('Killed by Laser! Press R to restart.');
+                    return; // End game immediately on hit
+                }
+
+                // Check collision with platforms (makes projectiles stop at walls)
+                platforms.forEach(p => {
+                    if (
+                        proj.x + proj.radius > p.x &&
+                        proj.x - proj.radius < p.x + p.width &&
+                        proj.y + proj.radius > p.y &&
+                        proj.y - proj.radius < p.y + p.height
+                    ) {
+                        proj.isDead = true;
+                    }
+                });
+            }
+
+            // Filter out projectiles marked as dead (off screen or hit platform)
+            projectiles = projectiles.filter(proj => !proj.isDead);
+        }
+
+        function gameOver(message) {
+            gameRunning = false;
+            STATUS_MESSAGE.textContent = message;
+            STATUS_MESSAGE.style.color = message.includes("Win") ? '#ffc300' : '#ff4500'; // Gold for Win, Red for Loss
+        }
+
+        // --- Input Handlers ---
+        document.addEventListener('keydown', (e) => {
+            keys[e.code] = true;
+
+            // Prevent default browser behavior for all movement/jump keys
+            if (e.code === 'ArrowUp' || e.code === 'KeyW' || e.code === 'Space' || 
+                e.code === 'ArrowLeft' || e.code === 'KeyA' || 
+                e.code === 'ArrowRight' || e.code === 'KeyD') {
+                e.preventDefault(); 
+            }
+
+            if (e.code === 'ArrowUp' || e.code === 'KeyW' || e.code === 'Space') {
+                // Now handles ground jump, coyote jump, wall jump, or buffers the input
+                player.jump(); 
+            }
+
+            if (e.code === 'KeyR') {
+                initializeGame(); // Restart game
+            }
+        });
+
+        document.addEventListener('keyup', (e) => {
+            keys[e.code] = false;
+        });
+
+        // --- Game Loop ---
+        function gameLoop(currentTime) {
+            // Calculate delta time in seconds (for timer logic)
+            if (lastTime === 0) lastTime = currentTime;
+            const deltaTime = currentTime - lastTime;
+            lastTime = currentTime;
+
+            // 1. Clear Canvas
+            ctx.clearRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
+            ctx.shadowBlur = 0; // Reset glow for non-gem elements
+
+            // 2. Update Physics and Check Collisions
+            if (gameRunning) {
+                // Pass deltaTime to player for time-based jump logic
+                player.update(deltaTime); 
+
+                // Update turrets (moves and fires projectiles if ready)
+                turrets.forEach(t => t.update(deltaTime, projectiles));
+
+                // Update projectiles
+                projectiles.forEach(p => p.update());
+
+                // IMPORTANT: Check collisions AFTER player position update but BEFORE drawing
+                checkPlatformCollision();
+                checkCollectibleCollision();
+                checkProjectileCollision(); 
+
+                // Check for "fall off" death (not currently possible with ground platform)
+                if (player.y > GAME_HEIGHT) {
+                    gameOver('You fell! Press R to restart.');
+                }
+            }
+
+            // 3. Draw Elements
+            platforms.forEach(p => p.draw());
+            player.draw();
+            collectible.draw();
+            turrets.forEach(t => t.draw()); 
+
+            // Draw projectiles last so they appear on top
+            projectiles.forEach(p => p.draw()); 
+
+            // 4. Request Next Frame
+            if (gameRunning) {
+                requestAnimationFrame(gameLoop);
+            }
+        }
+
+        // Start the game when the window loads
+        window.onload = initializeGame;
+    </script>
+
+</body>
+</html>

@@ -1,0 +1,78 @@
+  <!DOCTYPE html>
+  <html lang="en">
+  <head>
+      <meta charset="UTF-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <title>Ideas for Website</title>
+      <h2 align="center">Ideas for the Website</h2>
+      <h4 align="center">❌ means it's not done yet</h4>
+      <style>
+          .done {
+              text-decoration: line-through;
+              color: #888;
+              opacity: 0.7;
+          }
+      </style>
+      <input type="text" id="taskInput" placeholder="Enter a new idea...">
+      <button onclick="addTask()">Add Idea</button>
+      <ul id="taskList"></ul>
+
+      <script>
+          function createDeleteButton(listItem) {
+              const deleteBtn = document.createElement('span');
+              deleteBtn.textContent = '❌'; 
+              deleteBtn.classList.add('delete-btn');
+
+              deleteBtn.addEventListener('click', function(event) {
+                  event.stopPropagation();
+                  listItem.remove();
+              });
+              return deleteBtn;
+          }
+
+          function addTask() {
+              const taskInput = document.getElementById('taskInput');
+              const taskText = taskInput.value.trim();
+
+              if (taskText !== "") {
+                  const taskList = document.getElementById('taskList');
+                  const listItem = document.createElement('li');
+                  listItem.textContent = taskText;
+
+                  const deleteBtn = createDeleteButton(listItem);
+                  listItem.appendChild(deleteBtn);
+                  taskList.appendChild(listItem);
+
+                  // Save the idea to the server
+                  fetch('/submit', {
+                      method: 'POST',
+                      headers: {
+                          'Content-Type': 'application/json'
+                      },
+                      body: JSON.stringify({ idea: taskText })
+                  });
+
+                  taskInput.value = '';
+              }
+          }
+
+          // Fetch ideas from ideas.json when the page loads
+          window.onload = function() {
+              fetch('/ideas')
+                  .then(response => response.json())
+                  .then(data => {
+                      const taskList = document.getElementById('taskList');
+                      data.forEach(idea => {
+                          const listItem = document.createElement('li');
+                          listItem.textContent = idea;
+                          const deleteBtn = createDeleteButton(listItem);
+                          listItem.appendChild(deleteBtn);
+                          taskList.appendChild(listItem);
+                      });
+                  });
+          }
+      </script>
+  </head>
+  <body>
+  </body>
+  </html>

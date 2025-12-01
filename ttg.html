@@ -1,0 +1,1354 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Retro Platformer - Randomized</title>
+    <style>
+        /* platform arrys line 566 */
+        /* Custom retro/pixel font */
+        
+        @import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap');
+        body {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            margin: 0;
+            background-color: #0d1b2a; /* Dark blue background */
+            font-family: 'Press Start 2P', cursive;
+            color: #e0fbfc; /* Light cyan text */
+            padding: 10px;
+        }
+
+        #game-container {
+            border: 5px solid #ffc300; /* Gold border */
+            box-shadow: 0 0 20px rgba(255, 195, 0, 0.7); /* Glow effect */
+            background-color: #2b3a55; /* Slightly lighter game background */
+            border-radius: 10px;
+            overflow: hidden;
+        }
+
+        canvas {
+            display: block;
+        }
+
+        .game-info {
+            width: 100%;
+            max-width: 900px; /* Adjusted for new width */
+            text-align: center;
+            margin-bottom: 10px;
+            font-size: 0.8rem;
+        }
+
+        .controls {
+            margin-top: 20px;
+            text-align: center;
+            font-size: 0.8rem;
+            line-height: 1.5;
+            color: #ade8f4;
+        }
+
+        .controls b {
+            color: #ff9800;
+        }
+
+        .game-layout {
+            display: flex;
+            align-items: flex-start;
+            gap: 20px;
+            justify-content: center;
+        }
+
+        .difficulty-panel {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            margin-top: 35px;
+        }
+
+        .difficulty-btn {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: 3px solid #ffc300;
+            padding: 12px 20px;
+            font-family: 'Press Start 2P', cursive;
+            font-size: 0.7rem;
+            cursor: pointer;
+            border-radius: 8px;
+            transition: all 0.3s;
+            min-width: 120px;
+        }
+
+        .difficulty-btn:hover {
+            transform: scale(1.05);
+            box-shadow: 0 0 15px rgba(255, 195, 0, 0.8);
+        }
+
+        .difficulty-btn.active {
+            background: linear-gradient(135deg, #ffc300 0%, #ff9800 100%);
+            border-color: #fff;
+            box-shadow: 0 0 20px rgba(255, 195, 0, 1);
+        }
+    </style>
+</head>
+<body>
+
+    <div class="game-info">
+        <div id="status-message" style="color: #48e42f;">Use controls to reach the gem!</div>
+    </div>
+
+    <div class="game-layout">
+        <div class="difficulty-panel">
+            <button class="difficulty-btn" onclick="setDifficulty('easy')" id="btn-easy">EASY</button>
+            <button class="difficulty-btn active" onclick="setDifficulty('medium')" id="btn-medium">MEDIUM</button>
+            <button class="difficulty-btn" onclick="setDifficulty('hard')" id="btn-hard">HARD</button>
+        </div>
+
+        <div id="game-container">
+            <canvas id="gameCanvas"></canvas>
+        </div>
+    </div>
+
+    <div class="controls">
+        Move: <b>&larr;</b> & <b>&rarr;</b> | Jump: <b>&uarr;</b>/W/Space | Stop Fall: <b>S</b> | Wall Jump Enabled! | Reset: <b>R</b> <br>High Jump: Press <b>S</b> then <b>W</b>
+    </div>
+
+    <script>
+        // --- Setup ---
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const STATUS_MESSAGE = document.getElementById('status-message');
+
+        // NEW DIMENSIONS: Larger game area
+        const GAME_WIDTH = 890; 
+        const GAME_HEIGHT = 540; 
+        const GROUND_HEIGHT = 10; 
+        const WALL_THICKNESS = 10; 
+
+        canvas.width = GAME_WIDTH;
+        canvas.height = GAME_HEIGHT;
+
+        // Physics Constants
+        const GRAVITY = 0.4;
+        const PLAYER_MOVE_SPEED = 5;
+        const JUMP_VELOCITY = -10;
+        const WALL_JUMP_X_VELOCITY = 8; 
+        
+        // --- DIFFICULTY SETTINGS ---
+        const DIFFICULTY_SETTINGS = {
+            easy: {
+                PROJECTILE_SPEED: 6,
+                TEMP_PROJ_SPEED: 3,
+                MEGA_PROJECTILE_SPEED: 4,
+                MINI_PROJECTILE_SPEED: 4,
+                TEMPORARY_TURRET_SPAWN_COOLDOWN_MS: 100,
+                MAX_ACTIVE_TEMPORARY_TURRETS: 5,
+                MEGA_TURRET_SPAWN_COOLDOWN_MS: 6000,
+                MAX_ACTIVE_MEGA_TURRETS: 1,
+                TURRET_FIRE_COOLDOWN: 2500,
+                MEGA_TURRET_FIRE_COOLDOWN: 4000
+            },
+            medium: {
+                PROJECTILE_SPEED: 8,
+                TEMP_PROJ_SPEED: 4,
+                MEGA_PROJECTILE_SPEED: 5,
+                MINI_PROJECTILE_SPEED: 5,
+                TEMPORARY_TURRET_SPAWN_COOLDOWN_MS: 50,
+                MAX_ACTIVE_TEMPORARY_TURRETS: 7,
+                MEGA_TURRET_SPAWN_COOLDOWN_MS: 4000,
+                MAX_ACTIVE_MEGA_TURRETS: 1,
+                TURRET_FIRE_COOLDOWN: 2000,
+                MEGA_TURRET_FIRE_COOLDOWN: 3000
+            },
+            hard: {
+                PROJECTILE_SPEED: 12,
+                TEMP_PROJ_SPEED: 7,
+                MEGA_PROJECTILE_SPEED: 8,
+                MINI_PROJECTILE_SPEED: 8,
+                TEMPORARY_TURRET_SPAWN_COOLDOWN_MS: 30,
+                MAX_ACTIVE_TEMPORARY_TURRETS: 10,
+                MEGA_TURRET_SPAWN_COOLDOWN_MS: 2500,
+                MAX_ACTIVE_MEGA_TURRETS: 2,
+                TURRET_FIRE_COOLDOWN: 5000,
+                MEGA_TURRET_FIRE_COOLDOWN: 5000
+            }
+        };
+
+        // Current difficulty (default to medium)
+        let currentDifficulty = 'medium';
+        
+        // Current settings (start with medium)
+        let PROJECTILE_SPEED = DIFFICULTY_SETTINGS.medium.PROJECTILE_SPEED;
+        let TEMP_PROJ_SPEED = DIFFICULTY_SETTINGS.medium.TEMP_PROJ_SPEED;
+        let MEGA_PROJECTILE_SPEED = DIFFICULTY_SETTINGS.medium.MEGA_PROJECTILE_SPEED;
+        let MINI_PROJECTILE_SPEED = DIFFICULTY_SETTINGS.medium.MINI_PROJECTILE_SPEED;
+        let TEMPORARY_TURRET_SPAWN_COOLDOWN_MS = DIFFICULTY_SETTINGS.medium.TEMPORARY_TURRET_SPAWN_COOLDOWN_MS;
+        let MAX_ACTIVE_TEMPORARY_TURRETS = DIFFICULTY_SETTINGS.medium.MAX_ACTIVE_TEMPORARY_TURRETS;
+        let MEGA_TURRET_SPAWN_COOLDOWN_MS = DIFFICULTY_SETTINGS.medium.MEGA_TURRET_SPAWN_COOLDOWN_MS;
+        let MAX_ACTIVE_MEGA_TURRETS = DIFFICULTY_SETTINGS.medium.MAX_ACTIVE_MEGA_TURRETS;
+        let TURRET_FIRE_COOLDOWN = DIFFICULTY_SETTINGS.medium.TURRET_FIRE_COOLDOWN;
+        let MEGA_TURRET_FIRE_COOLDOWN = DIFFICULTY_SETTINGS.medium.MEGA_TURRET_FIRE_COOLDOWN;
+        
+        // --- PERMANENT TURRET PROJECTILE SETTINGS ---
+        const PROJECTILE_COLOR = '#ff4500'; 
+        const PROJECTILE_RADIUS = 5;
+        
+        // --- TEMPORARY TURRET SETTINGS ---
+        const TEMP_PROJ_COLOR = '#ff8c00'; 
+        const TEMP_PROJ_RADIUS = 5;    
+        const TURRET_LIFESPAN_MS = 2000;
+        
+        // --- MEGA TURRET/PROJECTILE SETTINGS ---
+        const MEGA_PROJECTILE_RADIUS = 12;
+        const MEGA_PROJECTILE_COLOR = '#ff0000';
+        const MINI_PROJECTILE_COUNT = 8;
+        const MINI_PROJECTILE_RADIUS = 3;
+        const MINI_PROJECTILE_COLOR = '#ffc300';
+        const MEGA_TURRET_LIFESPAN_MS = 3000;
+
+        // Safety Zone Constant
+        const START_ZONE_CLEARANCE = 150; // Minimum vertical clearance (in pixels) from player's start Y position.
+
+        // Jump Mechanics
+        const COYOTE_TIME_MAX = 100; 
+        const JUMP_BUFFER_MAX = 100; 
+
+        // Game State
+        let gameRunning = false;
+        let keys = {};
+        let sKeyPressed = false; // Track if S key was already pressed
+        let sKeyPressTime = 0; // Track when S was pressed
+        const HIGH_JUMP_WINDOW = 300; // Time window in ms to press W after S for high jump
+        const HIGH_JUMP_VELOCITY = -13; // Stronger jump velocity
+        let animationFrameId = null; // Track the animation frame to prevent multiple loops
+
+        // Game Objects Arrays
+        let platforms = [];
+        let collectible;
+        let player;
+        let turrets = [];          
+        let temporaryTurrets = []; 
+        let megaTurrets = []; // New array for mega turrets
+        let projectiles = []; 
+        let lastTime = 0; // Will be set on first frame
+
+        // Temporary Turret Management
+        let temporaryTurretCooldown = TEMPORARY_TURRET_SPAWN_COOLDOWN_MS; 
+        
+        // Mega Turret Management
+        let megaTurretCooldown = MEGA_TURRET_SPAWN_COOLDOWN_MS;
+        
+        // --- Game Objects (Classes) ---
+        
+        class Player {
+            // ... (Player class remains unchanged) ...
+            constructor(x, y) {
+                this.x = x;
+                this.y = y;
+                this.width = 25;
+                this.height = 25;
+                this.vx = 0; 
+                this.vy = 0; 
+                this.onGround = true;
+                this.onWall = false; 
+                this.wallSide = 0;   
+                this.color = '#ff9800'; 
+
+                this.coyoteTimeCounter = 0; 
+                this.jumpBufferCounter = 0; 
+            }
+
+            getBounds() {
+                return {
+                    left: this.x,
+                    right: this.x + this.width,
+                    top: this.y,
+                    bottom: this.y + this.height
+                };
+            }
+
+            draw() {
+                ctx.fillStyle = this.color;
+                ctx.fillRect(this.x, this.y, this.width, this.height);
+            }
+
+            update(deltaTime) {
+                if (!gameRunning) return;
+
+                // 1. Manage Counters
+                this.jumpBufferCounter = Math.max(0, this.jumpBufferCounter - deltaTime);
+
+                if (this.onGround) {
+                    this.coyoteTimeCounter = COYOTE_TIME_MAX;
+                } else {
+                    this.coyoteTimeCounter = Math.max(0, this.coyoteTimeCounter - deltaTime);
+                }
+
+                // 2. Horizontal Movement
+                const isWallJumpMomentum = Math.abs(this.vx) > PLAYER_MOVE_SPEED * 1.5; 
+
+                if (isWallJumpMomentum) {
+                    this.vx *= 0.9;
+                } else {
+                    this.vx = 0;
+                    if ((keys['ArrowLeft'] || keys['KeyA']) && this.x > 0) {
+                        this.vx = -PLAYER_MOVE_SPEED;
+                    }
+                    if ((keys['ArrowRight'] || keys['KeyD']) && this.x < GAME_WIDTH - this.width) {
+                        this.vx = PLAYER_MOVE_SPEED;
+                    }
+                }
+
+                // 3. Apply Gravity
+                if (!this.onGround) {
+                    this.vy += GRAVITY;
+                }
+
+                // S key to stop vertical momentum (only once per press)
+                if ((keys['KeyS'] || keys['ArrowDown']) && !sKeyPressed) {
+                    this.vy = 0;
+                    sKeyPressed = true;
+                    sKeyPressTime = Date.now(); // Record when S was pressed
+                }
+
+                this.x += this.vx;
+                this.y += this.vy;
+
+                // Reset states *before* collision checks 
+                this.onGround = false;
+                this.onWall = false; 
+                this.wallSide = 0;
+
+                // --- Canvas Edge Boundary Check ---
+                const isPlayerMidAir = this.y + this.height < GAME_HEIGHT - GROUND_HEIGHT;
+
+                // Check Left Boundary
+                if (this.x <= WALL_THICKNESS) {
+                    this.x = WALL_THICKNESS; 
+                    this.vx = 0;
+                    if (isPlayerMidAir) { 
+                        this.onWall = true;
+                        this.wallSide = -1; 
+                    }
+                } 
+
+                // Check Right Boundary
+                else if (this.x + this.width >= GAME_WIDTH - WALL_THICKNESS) {
+                    this.x = GAME_WIDTH - WALL_THICKNESS - this.width; 
+                    this.vx = 0;
+                    if (isPlayerMidAir) { 
+                        this.onWall = true;
+                        this.wallSide = 1; 
+                    }
+                }
+            }
+
+            jump() {
+                if (!gameRunning) return;
+
+                // Ground Jump (using coyote time)
+                if (this.onGround || this.coyoteTimeCounter > 0) {
+                    // Check if S was pressed recently for high jump
+                    const timeSinceSPress = Date.now() - sKeyPressTime;
+                    if (timeSinceSPress < HIGH_JUMP_WINDOW && sKeyPressTime > 0) {
+                        // High jump!
+                        this.vy = HIGH_JUMP_VELOCITY;
+                        sKeyPressTime = 0; // Reset to prevent multiple high jumps
+                    } else {
+                        // Normal jump
+                        this.vy = JUMP_VELOCITY;
+                    }
+                    this.onGround = false;
+                    this.coyoteTimeCounter = 0;
+                    this.jumpBufferCounter = 0;
+                    return;
+                }
+
+                // Wall Jump 
+                if (this.onWall) {
+                    this.vy = JUMP_VELOCITY; 
+                    this.vx = -this.wallSide * WALL_JUMP_X_VELOCITY; 
+                    this.onWall = false; 
+                    this.wallSide = 0;
+                    this.jumpBufferCounter = 0; 
+                    return;
+                }
+
+                // Buffer the input
+                this.jumpBufferCounter = JUMP_BUFFER_MAX;
+            }
+        }
+
+        class Platform {
+            // ... (Platform class remains unchanged) ...
+            constructor(x, y, w, h) {
+                this.x = x;
+                this.y = y;
+                this.width = w;
+                this.height = h;
+                this.color = '#48e42f'; 
+            }
+
+            draw() {
+                ctx.fillStyle = this.color;
+                ctx.fillRect(this.x, this.y, this.width, this.height);
+            }
+        }
+
+        class Collectible {
+            // ... (Collectible class remains unchanged) ...
+            constructor(x, y) {
+                this.x = x;
+                this.y = y;
+                this.size = 20;
+                this.color = '#00ffff'; 
+                this.collected = false;
+            }
+
+            draw() {
+                if (!this.collected) {
+                    ctx.fillStyle = this.color;
+                    ctx.beginPath();
+                    ctx.moveTo(this.x + this.size / 2, this.y);
+                    ctx.lineTo(this.x + this.size, this.y + this.size / 2);
+                    ctx.lineTo(this.x + this.size / 2, this.y + this.size);
+                    ctx.lineTo(this.x, this.y + this.size / 2);
+                    ctx.closePath();
+                    ctx.fill();
+
+                    ctx.shadowBlur = 10;
+                    ctx.shadowColor = this.color;
+                }
+            }
+        }
+
+        class Projectile {
+            constructor(x, y, angle, speed, color, radius, isMega = false) { 
+                this.x = x;
+                this.y = y;
+                this.radius = radius;
+                this.color = color; 
+
+                this.vx = Math.cos(angle) * speed;
+                this.vy = Math.sin(angle) * speed;
+
+                this.isDead = false;
+                this.isMega = isMega; // New property
+            }
+
+            update() {
+                this.x += this.vx;
+                this.y += this.vy;
+
+                if (this.x < 0 || this.x > GAME_WIDTH || this.y < 0 || this.y > GAME_HEIGHT) {
+                    this.isDead = true;
+                }
+            }
+
+            draw() {
+                ctx.fillStyle = this.color;
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+                ctx.fill();
+
+                ctx.shadowBlur = 10;
+                ctx.shadowColor = this.color;
+                ctx.shadowOffsetX = 0;
+                ctx.shadowOffsetY = 0;
+            }
+        
+            // --- NEW FUNCTION: Explosion Logic ---
+            explodeIntoMiniProjectiles() {
+                const miniProjectiles = [];
+                for (let i = 0; i < MINI_PROJECTILE_COUNT; i++) {
+                    // Spread the mini projectiles evenly in a circle (0 to 2*PI)
+                    const angle = (i / MINI_PROJECTILE_COUNT) * (Math.PI * 2); 
+                    miniProjectiles.push(new Projectile(
+                        this.x, 
+                        this.y, 
+                        angle, 
+                        MINI_PROJECTILE_SPEED, 
+                        MINI_PROJECTILE_COLOR, 
+                        MINI_PROJECTILE_RADIUS
+                    ));
+                }
+                return miniProjectiles;
+            }
+            // -------------------------------------
+        }
+
+
+        class Turret {
+            constructor(x, y, angle = 0, minX = x, maxX = x, minY = y, maxY = y, moveSpeed = 0, isTemporary = false, isMegaTurret = false) { 
+                this.x = x;
+                this.y = y;
+                this.angle = angle; 
+                this.width = 30;
+                this.height = 10;
+                this.isTemporary = isTemporary;
+                this.isMegaTurret = isMegaTurret; // New property
+
+                if (this.isMegaTurret) {
+                    this.color = '#330000'; // Darker red/black for mega turret base
+                    this.fireCooldown = MEGA_TURRET_FIRE_COOLDOWN;
+                } else if (this.isTemporary) {
+                    this.color = '#ff00ff'; // Magenta for temporary
+                    this.fireCooldown = TURRET_FIRE_COOLDOWN;
+                } else {
+                    this.color = '#7f0000'; // Dark Red for permanent
+                    this.fireCooldown = TURRET_FIRE_COOLDOWN;
+                }
+                
+                this.isDead = false;
+
+                this.timeUntilNextShot = 0; 
+                
+                // Use the lifespan constants
+                if (this.isMegaTurret) {
+                    this.despawnTimer = MEGA_TURRET_LIFESPAN_MS;
+                } else if (this.isTemporary) {
+                    this.despawnTimer = TURRET_LIFESPAN_MS;
+                } else {
+                    this.despawnTimer = Infinity;
+                }
+                this.hasFired = false;
+
+                this.minX = minX;
+                this.maxX = maxX;
+                this.minY = minY; 
+                this.maxY = maxY; 
+                this.moveSpeed = moveSpeed; 
+                this.isMovingX = this.minX !== this.maxX; 
+                this.isMovingY = this.minY !== this.maxY; 
+
+                if (this.isMovingX && this.isMovingY) {
+                    this.isMovingY = false;
+                }
+
+                if (this.isMovingX) {
+                    this.directionX = 1; 
+                } else if (this.isMovingY) {
+                    this.directionY = 1; 
+                }
+            }
+
+            getMuzzlePosition() {
+                const center = { x: this.x + this.width / 2, y: this.y + this.height / 2 };
+                // Slightly larger offset for the mega turret visually
+                const offset = (this.isMegaTurret ? this.width / 2 + 10 : this.width / 2 + 5); 
+                const dx = Math.cos(this.angle);
+                const dy = Math.sin(this.angle);
+
+                return {
+                    x: center.x + offset * dx,
+                    y: center.y + offset * dy
+                };
+            }
+
+            update(deltaTime, projectiles) {
+                // 1. Movement Logic (Patrolling - only for permanent and mega)
+                if (!this.isTemporary) {
+                    const deltaMovement = (this.moveSpeed * deltaTime) / 1000; 
+
+                    if (this.isMovingX) {
+                        this.x += deltaMovement * this.directionX;
+
+                        if (this.directionX === 1 && this.x + this.width >= this.maxX) {
+                            this.x = this.maxX - this.width; 
+                            this.directionX = -1; 
+                        } else if (this.directionX === -1 && this.x <= this.minX) {
+                            this.x = this.minX; 
+                            this.directionX = 1; 
+                        }
+                    }
+
+                    if (this.isMovingY) {
+                        this.y += deltaMovement * this.directionY;
+
+                        if (this.directionY === 1 && this.y + this.height >= this.maxY) {
+                            this.y = this.maxY - this.height; 
+                            this.directionY = -1; 
+                        } else if (this.directionY === -1 && this.y <= this.minY) {
+                            this.y = this.minY; 
+                            this.directionY = 1; 
+                        }
+                    }
+                }
+
+                // 2. Firing Logic
+                this.timeUntilNextShot -= deltaTime;
+
+                if (this.timeUntilNextShot <= 0) {
+                    if (this.isTemporary && this.hasFired) {
+                        // Temporary turrets fire once
+                    } else {
+                        const muzzle = this.getMuzzlePosition();
+                        
+                        let projSpeed = PROJECTILE_SPEED;
+                        let projColor = PROJECTILE_COLOR;
+                        let projRadius = PROJECTILE_RADIUS;
+                        let isMega = false;
+
+                        // Use custom settings for temporary turrets
+                        if (this.isTemporary) {
+                            projSpeed = TEMP_PROJ_SPEED;
+                            projColor = TEMP_PROJ_COLOR;
+                            projRadius = TEMP_PROJ_RADIUS;
+                        } 
+                        // Use custom settings for Mega turrets
+                        else if (this.isMegaTurret) {
+                            projSpeed = MEGA_PROJECTILE_SPEED;
+                            projColor = MEGA_PROJECTILE_COLOR;
+                            projRadius = MEGA_PROJECTILE_RADIUS;
+                            isMega = true;
+                        }
+
+                        projectiles.push(new Projectile(muzzle.x, muzzle.y, this.angle, projSpeed, projColor, projRadius, isMega));
+                        this.hasFired = true;
+                        
+                        if (!this.isTemporary) {
+                            this.timeUntilNextShot = this.fireCooldown; 
+                        } else {
+                            this.timeUntilNextShot = 9999999; 
+                        }
+                    }
+                }
+                
+                // 3. Despawn Logic (for temporary and mega turrets)
+                if (this.isTemporary || this.isMegaTurret) {
+                    if (this.hasFired) {
+                        this.despawnTimer -= deltaTime;
+                        if (this.despawnTimer <= 0) {
+                            this.isDead = true;
+                        }
+                    }
+                }
+            }
+
+            draw() {
+                const cx = this.x + this.width / 2;
+                const cy = this.y + this.height / 2;
+
+                ctx.save();
+                ctx.translate(cx, cy);
+                ctx.rotate(this.angle);
+                ctx.translate(-cx, -cy);
+
+                ctx.fillStyle = this.color;
+                ctx.fillRect(this.x, this.y, this.width, this.height);
+
+                // Draw the muzzle, different color/size for Mega Turret
+                ctx.fillStyle = this.isMegaTurret ? '#ff0000' : (this.isTemporary ? '#ffc300' : '#ff4500'); 
+                ctx.beginPath();
+                // Draw a bigger, more pronounced muzzle for the mega turret
+                const muzzleRadius = this.isMegaTurret ? 6 : 4; 
+                ctx.arc(this.x + this.width + 5, this.y + this.height / 2, muzzleRadius, 0, Math.PI * 2);
+                ctx.fill();
+
+                ctx.restore(); 
+                ctx.shadowBlur = 0; 
+            }
+        }
+        
+        // --- Level Data (Modules) ---
+        const LevelModules = [
+            // Module 1: Two small platforms high and low (NO TURRET) - Updated for higher platform
+            {
+                moduleWidth: 150, 
+                platforms: [
+                    [10, GAME_HEIGHT - 60, 50, 10],
+                    [10, GAME_HEIGHT - 200, 50, 10] // Added higher platform
+                ],
+                turrets: [],
+                megaTurrets: [], // Added for consistency
+                spawnPoints: [
+                    [30, GAME_HEIGHT - 70 - 25], 
+                    [30, GAME_HEIGHT - 210 - 25]
+                ]
+            },
+            // Module 2: Long platform with static downward turret (HAS TURRET)
+            {
+                moduleWidth: 200,
+                platforms: [
+                    [20, GAME_HEIGHT - 120, 160, 15]
+                ],
+                turrets: [
+                    [100, GAME_HEIGHT - 170 - 10 - 30, Math.PI / 2]
+                ],
+                megaTurrets: [],
+                spawnPoints: [
+                    [40, GAME_HEIGHT - 135 - 25], 
+                    [160, GAME_HEIGHT - 135 - 25] 
+                ]
+            },
+            // Module 3: High platform with moving horizontal turret (HAS TURRET)
+            {
+                moduleWidth: 250,
+                platforms: [
+                    [50, GAME_HEIGHT - 180, 180, 15]
+                ],
+                turrets: [
+                    [200, GAME_HEIGHT - 180 - 10, Math.PI, 60, 200, 0, 0, 50]
+                ],
+                megaTurrets: [],
+                spawnPoints: [
+                    [70, GAME_HEIGHT - 195 - 25], 
+                    [140, GAME_HEIGHT - 195 - 25],
+                    [210, GAME_HEIGHT - 195 - 25]
+                ]
+            },
+            // Module 4: Tall vertical wall for wall jump practice (NO TURRET)
+            {
+                moduleWidth: 80,
+                platforms: [
+                    [30, GAME_HEIGHT - 100, 20, 90], 
+                ],
+                turrets: [],
+                megaTurrets: [],
+                spawnPoints: [
+                    [40, GAME_HEIGHT - 115 - 25], 
+                    [40, GAME_HEIGHT - 160 - 25]
+                ]
+            },
+            // Module 5: Steep vertical platforms for upward movement 
+            {
+                moduleWidth: 150,
+                platforms: [
+                    [20, GAME_HEIGHT - 150, 40, 10],   // Lower left (y=400)
+                    [40, GAME_HEIGHT - 350, 40, 10]   // Higher left (y=200)
+                ],
+                turrets: [],
+                megaTurrets: [],
+                spawnPoints: [
+                    [35, GAME_HEIGHT - 165 - 25],
+                    [105, GAME_HEIGHT - 265 - 25],
+                    [35, GAME_HEIGHT - 365 - 25]
+                ]
+            },
+            // Module 6: High ceiling ledge with right diagonal turret
+            {
+                moduleWidth: 220,
+                platforms: [
+                    [20, GAME_HEIGHT - 100, 40, 10], // Base jump pad
+                    [70, GAME_HEIGHT - 380, 120, 10] // High ledge (y=170)
+                ],
+                turrets: [
+                    // Turret pointing diagonally down-right from the high ledge (45 degrees)
+                    [100, GAME_HEIGHT - 379 - 10, Math.PI / 4, 100, 100, 0, 0, 0]
+                ],
+                megaTurrets: [],
+                spawnPoints: [
+                    [35, GAME_HEIGHT - 115 - 25],
+                    [90, GAME_HEIGHT - 395 - 25],
+                    [160, GAME_HEIGHT - 395 - 25]
+                ]
+            },
+            // Module 7: High ceiling ledge with left diagonal turret
+            {
+                moduleWidth: 220,
+                platforms: [
+                    [20, GAME_HEIGHT - 100, 40, 10], // Base jump pad
+                    [70, GAME_HEIGHT - 380, 120, 10] // High ledge (y=170)
+                ],
+                turrets: [
+                    // Turret pointing diagonally down-left from the high ledge (45 degrees)
+                    [100, GAME_HEIGHT - 379 - 10, Math.PI / 1.5, 100, 100, 0, 0, 0]
+                ],
+                megaTurrets: [],
+                spawnPoints: [
+                    [35, GAME_HEIGHT - 115 - 25],
+                    [90, GAME_HEIGHT - 395 - 25],
+                    [160, GAME_HEIGHT - 395 - 25]
+                ]
+            },
+            // Module 8: middle horizontal platform 
+            {
+                moduleWidth: 150,
+                platforms: [
+                    [90, GAME_HEIGHT - 250, 40, 10],   // Middle right (y=300)
+                ],
+                turrets: [],
+                megaTurrets: [],
+                spawnPoints: [
+                    [105, GAME_HEIGHT - 265 - 25]
+                ]
+            },
+             // Module 9: midair Tall vertical wall for wall jump practice (NO TURRET)
+            {
+                moduleWidth: 50,
+                platforms: [
+                    [30, GAME_HEIGHT - 267, 11, 50], 
+                ],
+                turrets: [],
+                megaTurrets: [],
+                spawnPoints: [
+                    [35, GAME_HEIGHT - 242 - 25]
+                ]
+            },
+        ];
+
+
+        // Utility function to add a single temporary turret at a non-overlapping spot
+        function addSingleTemporaryTurret() {
+            const turretWidth = 30;
+            const turretHeight = 10;
+            const MIN_SPACING = 30; 
+            
+            // Boundary definitions for spawning
+            const INNER_LEFT_BOUND = WALL_THICKNESS;
+            const INNER_RIGHT_BOUND = GAME_WIDTH - WALL_THICKNESS;
+            
+            // Safe vertical range for the turret's top edge (avoids the top wall and the ground)
+            const minY_Safe = WALL_THICKNESS + 10;
+            const maxY_Safe = GAME_HEIGHT - GROUND_HEIGHT - turretHeight - 10;
+            const verticalRange = maxY_Safe - minY_Safe;
+
+
+            // 1. Choose Wall and Angle (Left or Right only)
+            const edgeChoice = Math.random() < 0.5 ? 0 : 1; 
+            let x, angle;
+            const isLeftWall = (edgeChoice === 0);
+
+            if (isLeftWall) { 
+                // Left Edge (Fires Right)
+                x = INNER_LEFT_BOUND;
+                angle = 0;
+            } else { 
+                // Right Edge (Fires Left)
+                x = INNER_RIGHT_BOUND - turretWidth;
+                angle = Math.PI;
+            }
+            
+            // 2. Find a non-overlapping Y position
+            let y = null;
+            let attempts = 0;
+            const MAX_ATTEMPTS = 100; 
+
+            // Calculate the player's initial top Y position (where they start)
+            const playerStartTopY = GAME_HEIGHT - player.height - GROUND_HEIGHT - 1; 
+
+            do {
+                attempts++;
+                // Pick a random Y within the safe range
+                const potentialY = Math.random() * verticalRange + minY_Safe;
+                
+                let isOverlapping = false;
+                
+                // Check against player starting location if spawning on the left wall
+                if (isLeftWall) {
+                    // Check if the turret's top edge (potentialY) is too low and near the player's start Y.
+                    // If the turret is below the required clearance boundary, it's too close.
+                    if (potentialY > playerStartTopY - START_ZONE_CLEARANCE) {
+                        isOverlapping = true;
+                    }
+                }
+
+                // Check against existing temporary turrets
+                if (!isOverlapping) {
+                    for (const existingTurret of temporaryTurrets) {
+                        // Only check for overlap if the existing turret is on the SAME wall
+                        if (existingTurret.x === x) { 
+                            const newTurretTop = potentialY;
+                            const newTurretBottom = potentialY + turretHeight;
+                            const existingTurretTop = existingTurret.y;
+                            const existingTurretBottom = existingTurret.y + existingTurret.height;
+        
+                            // Overlap check including MIN_SPACING
+                            if (newTurretTop < existingTurretBottom + MIN_SPACING && 
+                                newTurretBottom > existingTurretTop - MIN_SPACING) {
+                                isOverlapping = true;
+                                break;
+                            }
+                        }
+                    }
+                }
+
+
+                if (!isOverlapping) {
+                    y = potentialY;
+                    break;
+                }
+            } while (y === null && attempts < MAX_ATTEMPTS);
+            
+            if (y === null) {
+                // Failed to find a spot, return null
+                return null; 
+            }
+
+            // 3. Create and return the new turret
+            return new Turret(
+                x, y, angle, 
+                x, x, y, y, 0, 
+                true 
+            );
+        }
+
+        // Function to create and add multiple temporary turrets in a burst
+        function attemptRefillTemporaryTurrets() {
+            // Loop and spawn until we hit the maximum limit
+            while (temporaryTurrets.length < MAX_ACTIVE_TEMPORARY_TURRETS) {
+                const newTurret = addSingleTemporaryTurret();
+                if (newTurret) {
+                    temporaryTurrets.push(newTurret);
+                } else {
+                    // Break the loop if we can't find a non-overlapping position
+                    break; 
+                }
+            }
+        }
+
+        // Function to spawn a single mega turret on the wall
+        function spawnMegaTurret() {
+            // Check if we've reached the maximum number of active mega turrets
+            if (megaTurrets.length >= MAX_ACTIVE_MEGA_TURRETS) {
+                return;
+            }
+            
+            const turretWidth = 30;
+            const turretHeight = 10;
+            
+            // Boundary definitions for spawning
+            const INNER_LEFT_BOUND = WALL_THICKNESS;
+            const INNER_RIGHT_BOUND = GAME_WIDTH - WALL_THICKNESS;
+            
+            // Safe vertical range for the turret's top edge
+            const minY_Safe = WALL_THICKNESS + 10;
+            const maxY_Safe = GAME_HEIGHT - GROUND_HEIGHT - turretHeight - 10;
+            const verticalRange = maxY_Safe - minY_Safe;
+
+            // Choose wall and angle (Left or Right only)
+            const isLeftWall = Math.random() < 0.5;
+            let x, angle;
+
+            if (isLeftWall) { 
+                // Left Edge (Fires Right)
+                x = INNER_LEFT_BOUND;
+                angle = 0;
+            } else { 
+                // Right Edge (Fires Left)
+                x = INNER_RIGHT_BOUND - turretWidth;
+                angle = Math.PI;
+            }
+            
+            // Pick a random Y within the safe range
+            const y = Math.random() * verticalRange + minY_Safe;
+
+            // Create and add the mega turret (isMegaTurret = true)
+            const newMegaTurret = new Turret(
+                x, y, angle, 
+                x, x, y, y, 0, 
+                false, // Not temporary
+                true   // Is mega turret
+            );
+
+            megaTurrets.push(newMegaTurret);
+        }
+
+        // Level Generation Function
+        // --- DIFFICULTY FUNCTION ---
+        function setDifficulty(difficulty) {
+            // Cancel any existing animation frame to prevent multiple loops
+            if (animationFrameId !== null) {
+                cancelAnimationFrame(animationFrameId);
+                animationFrameId = null;
+            }
+            
+            currentDifficulty = difficulty;
+            const settings = DIFFICULTY_SETTINGS[difficulty];
+            
+            // Update all difficulty-dependent variables
+            PROJECTILE_SPEED = settings.PROJECTILE_SPEED;
+            TEMP_PROJ_SPEED = settings.TEMP_PROJ_SPEED;
+            MEGA_PROJECTILE_SPEED = settings.MEGA_PROJECTILE_SPEED;
+            MINI_PROJECTILE_SPEED = settings.MINI_PROJECTILE_SPEED;
+            TEMPORARY_TURRET_SPAWN_COOLDOWN_MS = settings.TEMPORARY_TURRET_SPAWN_COOLDOWN_MS;
+            MAX_ACTIVE_TEMPORARY_TURRETS = settings.MAX_ACTIVE_TEMPORARY_TURRETS;
+            MEGA_TURRET_SPAWN_COOLDOWN_MS = settings.MEGA_TURRET_SPAWN_COOLDOWN_MS;
+            MAX_ACTIVE_MEGA_TURRETS = settings.MAX_ACTIVE_MEGA_TURRETS;
+            TURRET_FIRE_COOLDOWN = settings.TURRET_FIRE_COOLDOWN;
+            MEGA_TURRET_FIRE_COOLDOWN = settings.MEGA_TURRET_FIRE_COOLDOWN;
+            
+            // Update button states
+            document.querySelectorAll('.difficulty-btn').forEach(btn => btn.classList.remove('active'));
+            document.getElementById(`btn-${difficulty}`).classList.add('active');
+            
+            // Restart the game with new difficulty
+            if (gameRunning) {
+                initializeGame();
+            }
+        }
+
+        function generateLevel() {
+            let currentX = 0; 
+            // Increased number of modules to fill the new, wider area and account for new vertical modules
+            const numModules = 15; 
+            const allSpawnPoints = []; 
+
+            // 1. Initial Platforms (Ground and Walls)
+            platforms.push(
+                new Platform(0, GAME_HEIGHT - GROUND_HEIGHT, GAME_WIDTH, GROUND_HEIGHT),
+                new Platform(0, 0, WALL_THICKNESS, GAME_HEIGHT - GROUND_HEIGHT),
+                new Platform(GAME_WIDTH - WALL_THICKNESS, 0, WALL_THICKNESS, GAME_HEIGHT - GROUND_HEIGHT)
+            );
+
+            // Set player start position
+            player.x = WALL_THICKNESS + 25;
+            player.y = GAME_HEIGHT - player.height - GROUND_HEIGHT - 1;
+            currentX = player.x + player.width + 50; 
+            
+            let availableModules = LevelModules; 
+            
+            // 2. Randomly pick and place modules
+            for (let i = 0; i < numModules; i++) {
+                // Stop generating if we run out of horizontal space
+                if (currentX >= GAME_WIDTH - 150) break; 
+
+                const randomIndex = Math.floor(Math.random() * availableModules.length);
+                const module = availableModules[randomIndex];
+
+                // Create platforms
+                module.platforms.forEach(pData => {
+                    platforms.push(new Platform(pData[0] + currentX, pData[1], pData[2], pData[3]));
+                });
+
+                // Create permanent turrets
+                module.turrets.forEach(tData => {
+                    const [x, y, angle, minX_offset, maxX_offset, minY_offset, maxY_offset, moveSpeed] = tData;
+                    
+                    const minX = currentX + minX_offset;
+                    const maxX = currentX + maxX_offset;
+                    const minY = y + minY_offset; 
+                    const maxY = y + maxY_offset;
+                    
+                    turrets.push(new Turret(x + currentX, y, angle, minX, maxX, minY, maxY, moveSpeed, false, false));
+                });
+                
+                // Create MEGA turrets (NEW)
+                if (module.megaTurrets) {
+                    module.megaTurrets.forEach(tData => {
+                        const [x, y, angle, minX_offset, maxX_offset, minY_offset, maxY_offset, moveSpeed] = tData;
+                        
+                        const minX = currentX + minX_offset;
+                        const maxX = currentX + maxX_offset;
+                        const minY = y + minY_offset; 
+                        const maxY = y + maxY_offset;
+                        
+                        // Pass true for the isMegaTurret flag
+                        megaTurrets.push(new Turret(x + currentX, y, angle, minX, maxX, minY, maxY, moveSpeed, false, true));
+                    });
+                }
+                
+                // Save potential collectible spawn points
+                module.spawnPoints.forEach(sPoint => {
+                    if (sPoint[0] + currentX < GAME_WIDTH - WALL_THICKNESS - 10) {
+                        allSpawnPoints.push({
+                            x: sPoint[0] + currentX,
+                            y: sPoint[1]
+                        });
+                    }
+                });
+
+                currentX += module.moduleWidth + Math.random() * 30 + 20; 
+            }
+
+            // 3. Guaranteed Collectible Placement on the highest platform (farthest if tied)
+            let bestSpawnPos = null;
+
+            if (allSpawnPoints.length > 0) {
+                // First, find the minimum Y value (highest platform)
+                let minY = Infinity;
+                for (const pos of allSpawnPoints) {
+                    if (pos.y < minY) {
+                        minY = pos.y;
+                    }
+                }
+                
+                // Find all platforms at the highest level
+                const highestPlatforms = allSpawnPoints.filter(pos => pos.y === minY);
+                
+                // Among the highest platforms, find the farthest one (max X)
+                let maxX = -1;
+                for (const pos of highestPlatforms) {
+                    if (pos.x > maxX) {
+                        maxX = pos.x;
+                        bestSpawnPos = pos;
+                    }
+                }
+                
+                if (bestSpawnPos) {
+                    collectible = new Collectible(bestSpawnPos.x, bestSpawnPos.y);
+                } else {
+                     // Fallback 1
+                     collectible = new Collectible(GAME_WIDTH - WALL_THICKNESS - 30, GAME_HEIGHT - GROUND_HEIGHT - 30);
+                }
+            } else {
+                 // Fallback 2
+                 collectible = new Collectible(GAME_WIDTH - WALL_THICKNESS - 30, GAME_HEIGHT - GROUND_HEIGHT - 30);
+            }
+        }
+
+        function initializeGame() {
+            // Cancel any existing animation frame to prevent multiple loops
+            if (animationFrameId !== null) {
+                cancelAnimationFrame(animationFrameId);
+                animationFrameId = null;
+            }
+            
+            gameRunning = true;
+            STATUS_MESSAGE.textContent = 'Active...';
+            STATUS_MESSAGE.style.color = '#b2ff59';
+            keys = {};
+
+            platforms = [];
+            turrets = [];
+            temporaryTurrets = [];
+            megaTurrets = []; // Clear mega turrets
+            projectiles = []; 
+            // Initialize cooldown to 0 so the first batch spawns instantly on the first frame
+            temporaryTurretCooldown = 0;
+            megaTurretCooldown = MEGA_TURRET_SPAWN_COOLDOWN_MS; // Start with full cooldown for mega turrets
+            
+            player = new Player(0, 0); 
+
+            generateLevel();
+            
+            lastTime = 0; // Reset lastTime - will be set on first frame of game loop
+            animationFrameId = requestAnimationFrame(gameLoop);
+        }
+        
+        // --- Collision and Physics Logic ---
+
+        function checkPlatformCollision() {
+            platforms.forEach(p => {
+                const pBounds = { left: p.x, right: p.x + p.width, top: p.y, bottom: p.y + p.height };
+                const playerBounds = player.getBounds();
+
+                if (
+                    playerBounds.right > pBounds.left && playerBounds.left < pBounds.right &&
+                    playerBounds.bottom > pBounds.top && playerBounds.top < pBounds.bottom
+                ) {
+                    const previousBottom = playerBounds.bottom - player.vy; 
+                    const previousTop = playerBounds.top - player.vy;     
+                    const y_axis_alignment = playerBounds.right > pBounds.left + 1 && playerBounds.left < pBounds.right - 1;
+                    
+                    let hitWallSide = 0; // 1 for moving into right wall, -1 for moving into left wall
+
+                    // 1. VERTICAL COLLISION (Landing or Headbump)
+                    if (player.vy >= 0 && previousBottom <= pBounds.top && y_axis_alignment) {
+                        player.y = pBounds.top - player.height; 
+                        player.vy = 0; 
+                        player.onGround = true;
+                        return; // Exit early as we've landed/hit ground
+                    } 
+
+                    else if (player.vy < 0 && previousTop >= pBounds.bottom && y_axis_alignment) {
+                        player.y = pBounds.bottom;
+                        player.vy = 0; 
+                        return; // Exit early as we've hit our head
+                    }
+
+                    // 2. HORIZONTAL COLLISION (Wall Hit)
+                    const previousRight = playerBounds.right - player.vx;
+                    const previousLeft = playerBounds.left - player.vx;
+                    
+                    if (player.vx > 0 && previousRight <= pBounds.left) {
+                        player.x = pBounds.left - player.width;
+                        player.vx = 0;
+                        hitWallSide = 1;
+                    } 
+                    else if (player.vx < 0 && previousLeft >= pBounds.right) {
+                        player.x = pBounds.right;
+                        player.vx = 0;
+                        hitWallSide = -1;
+                    }
+
+                    // 3. Wall Jump Logic Check
+                    if (hitWallSide !== 0 && playerBounds.bottom > pBounds.top + 5 && playerBounds.top < pBounds.bottom - 5) {
+                        player.onWall = true;
+                        player.wallSide = hitWallSide;
+                        // Slow vertical descent on wall contact
+                        if (player.vy > 0) player.vy *= 0.2; 
+                    }
+                }
+            });
+        }
+
+        // --- NEW PROJECTILE COLLISION LOGIC ---
+        function checkProjectileCollision() {
+            const newProjectiles = [];
+
+            projectiles.forEach(proj => {
+                let collision = false;
+                
+                // 1. Check Player Hit
+                if (
+                    proj.x + proj.radius > player.x && proj.x - proj.radius < player.x + player.width &&
+                    proj.y + proj.radius > player.y && proj.y - proj.radius < player.y + player.height
+                ) {
+                    collision = true;
+                    if (gameRunning) gameOver("You were hit by a projectile! Try again.");
+                }
+
+                // 2. Check Platform Hit (Triggers explosion for MegaProjectile)
+                platforms.forEach(p => {
+                    // Simple AABB check - approximate with a circle for simplicity
+                    const closestX = Math.max(p.x, Math.min(proj.x, p.x + p.width));
+                    const closestY = Math.max(p.y, Math.min(proj.y, p.y + p.height));
+                    
+                    const dx = proj.x - closestX;
+                    const dy = proj.y - closestY;
+                    
+                    if ((dx * dx + dy * dy) < (proj.radius * proj.radius)) {
+                        collision = true;
+                        
+                        // --- MEGA PROJECTILE EXPLOSION LOGIC ---
+                        if (proj.isMega) {
+                            // Add the newly created mini projectiles to the main list
+                            newProjectiles.push(...proj.explodeIntoMiniProjectiles());
+                            // Do NOT push the mega projectile back (it's dead/exploded)
+                        }
+                    }
+                });
+
+                // Add projectile back if it hasn't collided and is not dead (MegaProjectile only explodes, doesn't bounce/die otherwise)
+                if (!collision && !proj.isDead) {
+                    newProjectiles.push(proj);
+                }
+            });
+
+            projectiles = newProjectiles;
+        }
+
+
+        function checkWinCondition() {
+            if (collectible.collected) return; 
+
+            const pBounds = player.getBounds();
+            
+            if (
+                pBounds.right > collectible.x && pBounds.left < collectible.x + collectible.size &&
+                pBounds.bottom > collectible.y && pBounds.top < collectible.y + collectible.size
+            ) {
+                collectible.collected = true;
+                gameOver("Congratulations! You reached the gem!", true);
+            }
+        }
+
+        function gameOver(message, win = false) {
+            gameRunning = false;
+            STATUS_MESSAGE.textContent = message;
+            STATUS_MESSAGE.style.color = win ? '#00ffff' : '#ff4500';
+            // Stop all projectiles for a clean game over screen
+            projectiles = []; 
+        }
+
+        // --- Game Loop ---
+
+        function draw() {
+            ctx.clearRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
+            ctx.fillStyle = '#2b3a55';
+            ctx.fillRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
+
+            ctx.shadowBlur = 0; 
+            
+            platforms.forEach(p => p.draw());
+            
+            turrets.forEach(t => t.draw());
+            temporaryTurrets.forEach(t => t.draw());
+            megaTurrets.forEach(t => t.draw()); // Draw mega turrets
+
+            projectiles.forEach(p => p.draw());
+            
+            collectible.draw();
+            player.draw();
+        }
+
+        function update(deltaTime) {
+            if (!gameRunning) return;
+
+            // 1. Player Update
+            player.update(deltaTime);
+
+            // 2. Refill Temporary Turrets
+            temporaryTurretCooldown -= deltaTime;
+            if (temporaryTurretCooldown <= 0) {
+                attemptRefillTemporaryTurrets();
+                temporaryTurretCooldown = TEMPORARY_TURRET_SPAWN_COOLDOWN_MS;
+            }
+
+            // 2b. Spawn Mega Turrets on timer
+            megaTurretCooldown -= deltaTime;
+            if (megaTurretCooldown <= 0) {
+                spawnMegaTurret();
+                megaTurretCooldown = MEGA_TURRET_SPAWN_COOLDOWN_MS;
+            }
+
+            // 3. Update Turrets (Normal, Temporary, and Mega)
+            turrets.forEach(t => t.update(deltaTime, projectiles));
+            
+            megaTurrets = megaTurrets.filter(t => {
+                t.update(deltaTime, projectiles);
+                return !t.isDead;
+            });
+
+            temporaryTurrets = temporaryTurrets.filter(t => {
+                t.update(deltaTime, projectiles);
+                return !t.isDead;
+            });
+            
+            // 4. Update Projectiles
+            projectiles.forEach(p => p.update());
+            projectiles = projectiles.filter(p => !p.isDead);
+
+            // 5. Collision Checks
+            checkPlatformCollision();
+            checkProjectileCollision(); // Updated to handle explosions
+            checkWinCondition();
+        }
+
+        function gameLoop(currentTime) {
+            // Prevent large deltaTime spikes on first frame after reset
+            if (lastTime === 0) {
+                lastTime = currentTime;
+                requestAnimationFrame(gameLoop);
+                return; // Skip this frame to properly initialize timing
+            }
+            
+            const deltaTime = currentTime - lastTime;
+            lastTime = currentTime;
+
+            update(deltaTime);
+            draw();
+
+            animationFrameId = requestAnimationFrame(gameLoop);
+        }
+
+        // --- Event Listeners ---
+
+        document.addEventListener('keydown', (e) => {
+            keys[e.code] = true;
+            if ((e.code === 'ArrowUp' || e.code === 'KeyW' || e.code === 'Space') && gameRunning) {
+                e.preventDefault();
+                player.jump();
+            }
+            if (e.code === 'KeyR') {
+                e.preventDefault();
+                initializeGame();
+            }
+        });
+
+        document.addEventListener('keyup', (e) => {
+            keys[e.code] = false;
+            if (e.code === 'KeyS' || e.code === 'ArrowDown') {
+                sKeyPressed = false;
+                // Don't reset sKeyPressTime here - we want to keep the timer running
+            }
+        });
+
+        // Initialize the game when the page loads
+        initializeGame();
+    </script>
+</body>
+</html>  

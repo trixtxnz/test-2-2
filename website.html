@@ -1,0 +1,54 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Website</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            background-color: {{ prefs.bg_color }};
+            {% if prefs.bg_image %}
+            background-image: url("{{ url_for('static', filename='uploads/' + prefs.bg_image) }}");
+            background-size: cover;
+            background-position: center;
+            background-attachment: fixed;
+            {% endif %}
+            color: {{ prefs.text_color }};
+            font-size: {{ prefs.font_size }}px;
+        }
+        h1 {
+            color: {{ prefs.text_color }};
+            margin-bottom: 20px;
+        }
+        p {
+            color: {{ prefs.text_color }};
+        }
+        a {
+            color: #007bff;
+            text-decoration: underline;
+            margin-right: 15px;
+        }
+        a:hover {
+            color: #0056b3;
+        }
+    </style>
+</head>
+<body>
+    <h1>Welcome {{ username }}!</h1>
+    <p>{{ prefs.welcome_text }}</p>
+    <a href="{{ url_for('settings') }}">Settings</a>
+    <a href="{{ url_for('welcome') }}">Back to sign in</a>
+    <a href="{{ url_for('clicker') }}">clicker game</a>
+    <a href="{{ url_for('webcam') }}">webcam</a>
+    <a href="{{ url_for('platform') }}"></a>
+    <a href="{{ url_for('ptest3') }}"></a>
+    <a href="{{ url_for('ptest2') }}">survival platform</a>
+    <a href="{{ url_for('rtg') }}"></a>
+    <a href="{{ url_for('ttg') }}">platform</a>
+    <a href="{{ url_for('ideas') }}">ideas for website(not done yet)</a>
+    <a href="https://13846129-4f4c-48c6-b9a2-e1e218994535-00-3olgnj51tgmed.riker.replit.dev/">link for my mutiplayer website</a>
+</body>
+</html>

@@ -1,0 +1,838 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Retro Platformer - Randomized</title>
+    <style>
+        /* Custom retro/pixel font */
+        @import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap');
+
+        body {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            margin: 0;
+            background-color: #0d1b2a; /* Dark blue background */
+            font-family: 'Press Start 2P', cursive;
+            color: #e0fbfc; /* Light cyan text */
+            padding: 10px;
+        }
+
+        #game-container {
+            border: 5px solid #ffc300; /* Gold border */
+            box-shadow: 0 0 20px rgba(255, 195, 0, 0.7); /* Glow effect */
+            background-color: #2b3a55; /* Slightly lighter game background */
+            border-radius: 10px;
+            overflow: hidden;
+        }
+
+        canvas {
+            display: block;
+        }
+
+        .game-info {
+            width: 100%;
+            max-width: 600px;
+            text-align: center;
+            margin-bottom: 10px;
+            font-size: 0.8rem;
+        }
+
+        .controls {
+            margin-top: 20px;
+            text-align: center;
+            font-size: 0.8rem;
+            line-height: 1.5;
+            color: #ade8f4;
+        }
+
+        .controls b {
+            color: #ff9800;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="game-info">
+        <div id="status-message" style="color: #48e42f;">Use controls to reach the gem!</div>
+    </div>
+
+    <div id="game-container">
+        <canvas id="gameCanvas"></canvas>
+    </div>
+
+    <div class="controls">
+        Move: <b>&larr;</b> & <b>&rarr;</b> | Jump: <b>&uarr;</b>/W/Space | Wall Jump Enabled! | Reset: <b>R</b>
+    </div>
+
+    <script>
+        // --- Setup ---
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const STATUS_MESSAGE = document.getElementById('status-message');
+
+        const GAME_WIDTH = 600;
+        const GAME_HEIGHT = 400;
+        const GROUND_HEIGHT = 10; 
+        const WALL_THICKNESS = 10; 
+
+        canvas.width = GAME_WIDTH;
+        canvas.height = GAME_HEIGHT;
+
+        // Physics Constants
+        const GRAVITY = 0.4;
+        const PLAYER_MOVE_SPEED = 5;
+        const JUMP_VELOCITY = -10;
+        const WALL_JUMP_X_VELOCITY = 8; 
+        const PROJECTILE_SPEED = 5; 
+
+        // Jump Mechanics
+        const COYOTE_TIME_MAX = 100; 
+        const JUMP_BUFFER_MAX = 100; 
+
+        // Game State
+        let gameRunning = false;
+        let keys = {};
+
+        // Game Objects Arrays
+        let platforms = [];
+        let collectible;
+        let player;
+        let turrets = [];           // Permanent, level-based turrets
+        let temporaryTurrets = [];  // Array for temporary, spawning turrets
+        let projectiles = []; 
+        let lastTime = 0;
+
+        // Temporary Turret Management
+        let temporaryTurretCooldown = 2000; // Time until the next temporary turret spawns (in ms)
+
+        // --- Game Objects (Classes) ---
+
+        class Player {
+            constructor(x, y) {
+                this.x = x;
+                this.y = y;
+                this.width = 25;
+                this.height = 25;
+                this.vx = 0; 
+                this.vy = 0; 
+                this.onGround = true;
+                this.onWall = false; 
+                this.wallSide = 0;   
+                this.color = '#ff9800'; 
+
+                this.coyoteTimeCounter = 0; 
+                this.jumpBufferCounter = 0; 
+            }
+
+            getBounds() {
+                return {
+                    left: this.x,
+                    right: this.x + this.width,
+                    top: this.y,
+                    bottom: this.y + this.height
+                };
+            }
+
+            draw() {
+                ctx.fillStyle = this.color;
+                ctx.fillRect(this.x, this.y, this.width, this.height);
+            }
+
+            update(deltaTime) {
+                if (!gameRunning) return;
+
+                // 1. Manage Counters
+                this.jumpBufferCounter = Math.max(0, this.jumpBufferCounter - deltaTime);
+
+                if (this.onGround) {
+                    this.coyoteTimeCounter = COYOTE_TIME_MAX;
+                } else {
+                    this.coyoteTimeCounter = Math.max(0, this.coyoteTimeCounter - deltaTime);
+                }
+
+                // 2. Horizontal Movement
+                const isWallJumpMomentum = Math.abs(this.vx) > PLAYER_MOVE_SPEED * 1.5; 
+
+                if (isWallJumpMomentum) {
+                    this.vx *= 0.9;
+                } else {
+                    this.vx = 0;
+                    if ((keys['ArrowLeft'] || keys['KeyA']) && this.x > 0) {
+                        this.vx = -PLAYER_MOVE_SPEED;
+                    }
+                    if ((keys['ArrowRight'] || keys['KeyD']) && this.x < GAME_WIDTH - this.width) {
+                        this.vx = PLAYER_MOVE_SPEED;
+                    }
+                }
+
+                // 3. Apply Gravity
+                if (!this.onGround) {
+                    this.vy += GRAVITY;
+                }
+
+                this.x += this.vx;
+                this.y += this.vy;
+
+                // Reset states *before* collision checks 
+                this.onGround = false;
+                this.onWall = false; 
+                this.wallSide = 0;
+
+                // --- Canvas Edge Boundary Check ---
+                const isPlayerMidAir = this.y + this.height < GAME_HEIGHT - GROUND_HEIGHT;
+
+                // Check Left Boundary
+                if (this.x < 0) {
+                    this.x = 0; 
+                    if (isPlayerMidAir) { 
+                        this.onWall = true;
+                        this.wallSide = -1; 
+                    }
+                } 
+
+                // Check Right Boundary
+                else if (this.x + this.width > GAME_WIDTH) {
+                    this.x = GAME_WIDTH - this.width; 
+                    if (isPlayerMidAir) { 
+                        this.onWall = true;
+                        this.wallSide = 1; 
+                    }
+                }
+            }
+
+            jump() {
+                if (!gameRunning) return;
+
+                // Ground Jump (using coyote time)
+                if (this.onGround || this.coyoteTimeCounter > 0) {
+                    this.vy = JUMP_VELOCITY;
+                    this.onGround = false;
+                    this.coyoteTimeCounter = 0;
+                    this.jumpBufferCounter = 0;
+                    return;
+                }
+
+                // Wall Jump 
+                if (this.onWall) {
+                    this.vy = JUMP_VELOCITY; 
+                    this.vx = -this.wallSide * WALL_JUMP_X_VELOCITY; 
+                    this.onWall = false; 
+                    this.wallSide = 0;
+                    this.jumpBufferCounter = 0; 
+                    return;
+                }
+
+                // Buffer the input
+                this.jumpBufferCounter = JUMP_BUFFER_MAX;
+            }
+        }
+
+        class Platform {
+            constructor(x, y, w, h) {
+                this.x = x;
+                this.y = y;
+                this.width = w;
+                this.height = h;
+                this.color = '#48e42f'; 
+            }
+
+            draw() {
+                ctx.fillStyle = this.color;
+                ctx.fillRect(this.x, this.y, this.width, this.height);
+            }
+        }
+
+        class Collectible {
+            constructor(x, y) {
+                this.x = x;
+                this.y = y;
+                this.size = 20;
+                this.color = '#00ffff'; 
+                this.collected = false;
+            }
+
+            draw() {
+                if (!this.collected) {
+                    ctx.fillStyle = this.color;
+                    ctx.beginPath();
+                    ctx.moveTo(this.x + this.size / 2, this.y);
+                    ctx.lineTo(this.x + this.size, this.y + this.size / 2);
+                    ctx.lineTo(this.x + this.size / 2, this.y + this.size);
+                    ctx.lineTo(this.x, this.y + this.size / 2);
+                    ctx.closePath();
+                    ctx.fill();
+
+                    ctx.shadowBlur = 10;
+                    ctx.shadowColor = this.color;
+                }
+            }
+        }
+
+        class Projectile {
+            constructor(x, y, angle) {
+                this.x = x;
+                this.y = y;
+                this.radius = 5;
+                this.color = '#ff4500'; 
+
+                this.vx = Math.cos(angle) * PROJECTILE_SPEED;
+                this.vy = Math.sin(angle) * PROJECTILE_SPEED;
+
+                this.isDead = false;
+            }
+
+            update() {
+                this.x += this.vx;
+                this.y += this.vy;
+
+                if (this.x < 0 || this.x > GAME_WIDTH || this.y < 0 || this.y > GAME_HEIGHT) {
+                    this.isDead = true;
+                }
+            }
+
+            draw() {
+                ctx.fillStyle = this.color;
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+                ctx.fill();
+
+                ctx.shadowBlur = 10;
+                ctx.shadowColor = this.color;
+                ctx.shadowOffsetX = 0;
+                ctx.shadowOffsetY = 0;
+            }
+        }
+
+
+        class Turret {
+            constructor(x, y, angle = 0, minX = x, maxX = x, minY = y, maxY = y, moveSpeed = 0, isTemporary = false) { 
+                this.x = x;
+                this.y = y;
+                this.angle = angle; 
+                this.width = 30;
+                this.height = 10;
+                this.color = isTemporary ? '#ff00ff' : '#7f0000'; 
+
+                this.isTemporary = isTemporary;
+                this.isDead = false;
+
+                this.fireCooldown = 2000; 
+                this.timeUntilNextShot = 0; 
+
+                this.despawnTimer = isTemporary ? 500 : Infinity; 
+                this.hasFired = false;
+
+
+                this.minX = minX;
+                this.maxX = maxX;
+                this.minY = minY; 
+                this.maxY = maxY; 
+                this.moveSpeed = moveSpeed; 
+                this.isMovingX = this.minX !== this.maxX; 
+                this.isMovingY = this.minY !== this.maxY; 
+
+                if (this.isMovingX && this.isMovingY) {
+                    this.isMovingY = false;
+                }
+
+                if (this.isMovingX) {
+                    this.directionX = 1; 
+                } else if (this.isMovingY) {
+                    this.directionY = 1; 
+                }
+            }
+
+            getMuzzlePosition() {
+                const center = { x: this.x + this.width / 2, y: this.y + this.height / 2 };
+                const offset = this.width / 2 + 5; 
+                const dx = Math.cos(this.angle);
+                const dy = Math.sin(this.angle);
+
+                return {
+                    x: center.x + offset * dx,
+                    y: center.y + offset * dy
+                };
+            }
+
+            update(deltaTime, projectiles) {
+                // 1. Movement Logic (Patrolling - only for permanent)
+                if (!this.isTemporary) {
+                    const deltaMovement = (this.moveSpeed * deltaTime) / 1000; 
+
+                    // Horizontal Movement
+                    if (this.isMovingX) {
+                        this.x += deltaMovement * this.directionX;
+
+                        if (this.directionX === 1 && this.x + this.width >= this.maxX) {
+                            this.x = this.maxX - this.width; 
+                            this.directionX = -1; 
+                        } else if (this.directionX === -1 && this.x <= this.minX) {
+                            this.x = this.minX; 
+                            this.directionX = 1; 
+                        }
+                    }
+
+                    // Vertical Movement
+                    if (this.isMovingY) {
+                        this.y += deltaMovement * this.directionY;
+
+                        if (this.directionY === 1 && this.y + this.height >= this.maxY) {
+                            this.y = this.maxY - this.height; 
+                            this.directionY = -1; 
+                        } else if (this.directionY === -1 && this.y <= this.minY) {
+                            this.y = this.minY; 
+                            this.directionY = 1; 
+                        }
+                    }
+                }
+
+                // 2. Firing Logic
+                this.timeUntilNextShot -= deltaTime;
+
+                if (this.timeUntilNextShot <= 0) {
+                    if (this.isTemporary && this.hasFired) {
+                        // Do nothing
+                    } else {
+                        const muzzle = this.getMuzzlePosition();
+
+                        projectiles.push(new Projectile(muzzle.x, muzzle.y, this.angle));
+                        this.hasFired = true;
+
+                        if (!this.isTemporary) {
+                            this.timeUntilNextShot = this.fireCooldown; 
+                        } else {
+                            this.timeUntilNextShot = 9999999; 
+                        }
+                    }
+                }
+
+                // 3. Despawn Logic (for temporary turrets)
+                if (this.isTemporary) {
+                    if (this.hasFired) {
+                        this.despawnTimer -= deltaTime;
+                        if (this.despawnTimer <= 0) {
+                            this.isDead = true;
+                        }
+                    }
+                }
+            }
+
+            draw() {
+                const cx = this.x + this.width / 2;
+                const cy = this.y + this.height / 2;
+
+                ctx.save();
+                ctx.translate(cx, cy);
+                ctx.rotate(this.angle);
+                ctx.translate(-cx, -cy);
+
+                ctx.fillStyle = this.color;
+                ctx.fillRect(this.x, this.y, this.width, this.height);
+
+                ctx.fillStyle = this.isTemporary ? '#ffc300' : '#ff4500'; 
+                ctx.beginPath();
+                ctx.arc(this.x + this.width + 5, this.y + this.height / 2, 4, 0, Math.PI * 2);
+                ctx.fill();
+
+                ctx.restore(); 
+                ctx.shadowBlur = 0; 
+            }
+        }
+
+        // --- Level Data ---
+        const LevelModules = [
+            // Module 1: Two small platforms high and low (NO TURRET)
+            {
+                moduleWidth: 150, 
+                platforms: [
+                    [10, GAME_HEIGHT - 60, 50, 15],
+                    [80, GAME_HEIGHT - 120, 50, 15]
+                ],
+                turrets: [],
+                spawnPoints: [
+                    [25, GAME_HEIGHT - 60 - 25], 
+                    [95, GAME_HEIGHT - 120 - 25] 
+                ]
+            },
+            // Module 2: Long platform with static downward turret (HAS TURRET)
+            {
+                moduleWidth: 200,
+                platforms: [
+                    [20, GAME_HEIGHT - 100, 160, 15]
+                ],
+                turrets: [
+                    [100, GAME_HEIGHT - 100 - 10 - 30, Math.PI / 2]
+                ],
+                spawnPoints: [
+                    [50, GAME_HEIGHT - 100 - 25], 
+                    [150, GAME_HEIGHT - 100 - 25] 
+                ]
+            },
+            // Module 3: High platform with moving horizontal turret (HAS TURRET)
+            {
+                moduleWidth: 250,
+                platforms: [
+                    [50, GAME_HEIGHT - 180, 180, 15]
+                ],
+                turrets: [
+                    [200, GAME_HEIGHT - 180 - 10, Math.PI, 60, 200, 0, 0, 50]
+                ],
+                spawnPoints: [
+                    [80, GAME_HEIGHT - 180 - 25], 
+                    [180, GAME_HEIGHT - 180 - 25]
+                ]
+            },
+            // Module 4: Tall vertical wall for wall jump practice (NO TURRET)
+            {
+                moduleWidth: 80,
+                platforms: [
+                    [30, GAME_HEIGHT - 100, 20, 90], 
+                ],
+                turrets: [],
+                spawnPoints: [
+                    [50, GAME_HEIGHT - 100 - 25], 
+                    [40, GAME_HEIGHT - 200]
+                ]
+            }
+        ];
+
+
+        // Function to create and add a temporary turret
+        function spawnTemporaryTurret() {
+            // 1. Determine spawn side (left or right)
+            const fromLeft = Math.random() < 0.5;
+
+            const turretWidth = 30;
+            const turretHeight = 10;
+
+            // Define the inner boundaries of the playable box
+            const INNER_LEFT_BOUND = WALL_THICKNESS;
+            const INNER_RIGHT_BOUND = GAME_WIDTH - WALL_THICKNESS;
+            // Assuming top edge is also a wall (10px)
+            const INNER_TOP_BOUND = WALL_THICKNESS; 
+            // Top edge of the main ground platform
+            const INNER_BOTTOM_BOUND = GAME_HEIGHT - GROUND_HEIGHT; 
+
+            let x, angle;
+
+            if (fromLeft) {
+                // Spawn position X: At the inner left wall boundary
+                x = INNER_LEFT_BOUND; 
+                // Fires right
+                angle = 0;
+            } else {
+                // Spawn position X: Inner right wall boundary minus turret width
+                x = INNER_RIGHT_BOUND - turretWidth;
+                // Fires left
+                angle = Math.PI;
+            }
+
+            // 2. Determine random safe vertical position
+            // Y position must be 10px below the ceiling wall and 10px above the ground platform
+            const minY = INNER_TOP_BOUND + 10; 
+            const maxY = INNER_BOTTOM_BOUND - turretHeight - 10; 
+
+            // Safety check
+            if (minY >= maxY) return; 
+
+            const y = Math.random() * (maxY - minY) + minY;
+
+            // 3. Create and add the temporary turret
+            const newTurret = new Turret(
+                x, y, angle, 
+                x, x, y, y, 0, // No movement
+                true // isTemporary = true
+            );
+
+            temporaryTurrets.push(newTurret);
+        }
+
+        // Level Generation Function
+        function generateLevel() {
+            let currentX = 0; 
+            let numModules = 5; 
+            const allSpawnPoints = []; 
+
+            // 1. Initial Platforms 
+            platforms.push(
+                new Platform(0, GAME_HEIGHT - GROUND_HEIGHT, GAME_WIDTH, GROUND_HEIGHT),
+                new Platform(0, 0, WALL_THICKNESS, GAME_HEIGHT - GROUND_HEIGHT),
+                new Platform(GAME_WIDTH - WALL_THICKNESS, 0, WALL_THICKNESS, GAME_HEIGHT - GROUND_HEIGHT)
+            );
+
+            player.x = WALL_THICKNESS + 25;
+            player.y = GAME_HEIGHT - player.height - GROUND_HEIGHT - 1;
+            currentX = player.x + player.width + 50; 
+
+            let availableModules = LevelModules; 
+
+            // 2. Randomly pick and place modules
+            for (let i = 0; i < numModules; i++) {
+                if (currentX >= GAME_WIDTH - 150) break; 
+
+                const randomIndex = Math.floor(Math.random() * availableModules.length);
+                const module = availableModules[randomIndex];
+
+                // Create platforms for the module
+                module.platforms.forEach(pData => {
+                    platforms.push(new Platform(pData[0] + currentX, pData[1], pData[2], pData[3]));
+                });
+
+                // Create permanent turrets for the module
+                module.turrets.forEach(tData => {
+                    const [x, y, angle, minX_offset, maxX_offset, minY_offset, maxY_offset, moveSpeed] = tData;
+
+                    const minX = currentX + minX_offset;
+                    const maxX = currentX + maxX_offset;
+                    const minY = y + minY_offset; 
+                    const maxY = y + maxY_offset;
+
+                    turrets.push(new Turret(x + currentX, y, angle, minX, maxX, minY, maxY, moveSpeed, false));
+                });
+
+                // Save potential collectible spawn points
+                module.spawnPoints.forEach(sPoint => {
+                    if (sPoint[0] + currentX < GAME_WIDTH - WALL_THICKNESS - 10) {
+                        allSpawnPoints.push({
+                            x: sPoint[0] + currentX,
+                            y: sPoint[1]
+                        });
+                    }
+                });
+
+                currentX += module.moduleWidth + Math.random() * 30 + 20; 
+            }
+
+            // 3. Guaranteed Collectible Placement
+            const START_ZONE = 100;
+            if (allSpawnPoints.length > 0) {
+                let validSpawnPoints = allSpawnPoints.filter(p => p.x >= START_ZONE);
+
+                if (validSpawnPoints.length === 0) { validSpawnPoints = allSpawnPoints; }
+
+                const randomSpawnIndex = Math.floor(Math.random() * validSpawnPoints.length);
+                const spawnPos = validSpawnPoints[randomSpawnIndex];
+
+                collectible = new Collectible(spawnPos.x, spawnPos.y);
+            } else {
+                 collectible = new Collectible(GAME_WIDTH - WALL_THICKNESS - 30, GAME_HEIGHT - GROUND_HEIGHT - 30);
+            }
+        }
+
+        function initializeGame() {
+            gameRunning = true;
+            STATUS_MESSAGE.textContent = 'Active...';
+            STATUS_MESSAGE.style.color = '#b2ff59';
+            keys = {};
+
+            // Reset all arrays and cooldowns
+            platforms = [];
+            turrets = [];
+            temporaryTurrets = [];
+            projectiles = []; 
+            temporaryTurretCooldown = 2000;
+
+            player = new Player(0, 0); 
+
+            generateLevel();
+
+            requestAnimationFrame(gameLoop);
+        }
+
+        // --- Collision and Physics Logic ---
+
+        function checkPlatformCollision() {
+            platforms.forEach(p => {
+                const pBounds = { left: p.x, right: p.x + p.width, top: p.y, bottom: p.y + p.height };
+                const playerBounds = player.getBounds();
+
+                if (
+                    playerBounds.right > pBounds.left && playerBounds.left < pBounds.right &&
+                    playerBounds.bottom > pBounds.top && playerBounds.top < pBounds.bottom
+                ) {
+                    const previousBottom = playerBounds.bottom - player.vy; 
+                    const previousTop = playerBounds.top - player.vy;      
+                    const y_axis_alignment = playerBounds.right > pBounds.left + 1 && playerBounds.left < pBounds.right - 1;
+
+                    // Landing on TOP of platform
+                    if (player.vy >= 0 && previousBottom <= pBounds.top && y_axis_alignment) {
+                        player.y = pBounds.top - player.height; 
+                        player.vy = 0; 
+                        player.onGround = true;
+                        return; 
+                    } 
+
+                    // Hitting BOTTOM of platform
+                    else if (player.vy < 0 && previousTop >= pBounds.bottom && y_axis_alignment) {
+                        player.y = pBounds.bottom;
+                        player.vy = 0;
+                        return; 
+                    }
+
+                    // Horizontal/Side Collision
+                    if (!player.onGround) {
+                        const previousRight = playerBounds.right - player.vx;
+                        const previousLeft = playerBounds.left - player.vx;
+
+                        if (player.vx > 0 && previousRight <= pBounds.left) {
+                            player.x = pBounds.left - player.width; 
+                            player.vx = 0;
+                            player.onWall = true;
+                            player.wallSide = 1; 
+                        } 
+                        else if (player.vx < 0 && previousLeft >= pBounds.right) {
+                            player.x = pBounds.right; 
+                            player.vx = 0;
+                            player.onWall = true;
+                            player.wallSide = -1; 
+                        }
+                    }
+                }
+            });
+        }
+
+        function checkCollectibleCollision() {
+            if (collectible.collected) return;
+
+            const pBounds = player.getBounds();
+            const cBounds = {
+                left: collectible.x,
+                right: collectible.x + collectible.size,
+                top: collectible.y,
+                bottom: collectible.y + collectible.size
+            };
+
+             if (pBounds.right > cBounds.left && pBounds.left < cBounds.right &&
+                 pBounds.bottom > cBounds.top && pBounds.top < cBounds.bottom) {
+
+                collectible.collected = true;
+                gameOver('You Win! Press R to play again.');
+            }
+        }
+
+        function checkProjectileCollision() {
+            if (!gameRunning) return;
+
+            const pBounds = player.getBounds();
+
+            for (let i = 0; i < projectiles.length; i++) {
+                const proj = projectiles[i];
+
+                const dx = pBounds.left + player.width / 2 - proj.x;
+                const dy = pBounds.top + player.height / 2 - proj.y;
+                const distanceSq = dx * dx + dy * dy;
+
+                const collisionThresholdSq = (player.width / 2 + proj.radius) ** 2;
+
+                if (distanceSq < collisionThresholdSq) {
+                    proj.isDead = true; 
+                    gameOver('Killed by Laser! Press R to restart.');
+                    return; 
+                }
+
+                // Check collision with platforms (makes projectiles stop at walls)
+                platforms.forEach(p => {
+                    if (
+                        proj.x + proj.radius > p.x && proj.x - proj.radius < p.x + p.width &&
+                        proj.y + proj.radius > p.y && proj.y - proj.radius < p.y + p.height
+                    ) {
+                        proj.isDead = true;
+                    }
+                });
+            }
+
+            projectiles = projectiles.filter(proj => !proj.isDead);
+        }
+
+        function gameOver(message) {
+            gameRunning = false;
+            STATUS_MESSAGE.textContent = message;
+            STATUS_MESSAGE.style.color = message.includes("Win") ? '#ffc300' : '#ff4500'; 
+        }
+
+        // --- Input Handlers ---
+        document.addEventListener('keydown', (e) => {
+            keys[e.code] = true;
+
+            if (e.code === 'ArrowUp' || e.code === 'KeyW' || e.code === 'Space' || 
+                e.code === 'ArrowLeft' || e.code === 'KeyA' || 
+                e.code === 'ArrowRight' || e.code === 'KeyD') {
+                e.preventDefault(); 
+            }
+
+            if ((e.code === 'ArrowUp' || e.code === 'KeyW' || e.code === 'Space') && player) {
+                player.jump(); 
+            }
+
+            if (e.code === 'KeyR') {
+                initializeGame(); 
+            }
+        });
+
+        document.addEventListener('keyup', (e) => {
+            keys[e.code] = false;
+        });
+
+        // --- Game Loop ---
+        function gameLoop(currentTime) {
+            if (lastTime === 0) lastTime = currentTime;
+            const deltaTime = currentTime - lastTime;
+            lastTime = currentTime;
+
+            ctx.clearRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
+            ctx.shadowBlur = 0; 
+
+            if (gameRunning) {
+                // Temporary Turret Spawner Logic
+                temporaryTurretCooldown -= deltaTime;
+                if (temporaryTurretCooldown <= 0) {
+                    spawnTemporaryTurret();
+                    temporaryTurretCooldown = 2000; // Reset to 2 seconds
+                }
+
+                player.update(deltaTime); 
+
+                // Update permanent turrets
+                turrets.forEach(t => t.update(deltaTime, projectiles));
+
+                // Update and filter temporary turrets
+                temporaryTurrets.forEach(t => t.update(deltaTime, projectiles));
+                temporaryTurrets = temporaryTurrets.filter(t => !t.isDead);
+
+                projectiles.forEach(p => p.update());
+
+                checkPlatformCollision();
+                checkCollectibleCollision();
+                checkProjectileCollision(); 
+
+                if (player.y > GAME_HEIGHT) {
+                    gameOver('You fell! Press R to restart.');
+                }
+            }
+
+            // Draw Elements
+            platforms.forEach(p => p.draw());
+            if (player) player.draw(); 
+            if (collectible) collectible.draw();
+
+            // Draw all turrets
+            turrets.forEach(t => t.draw()); 
+            temporaryTurrets.forEach(t => t.draw());
+
+            projectiles.forEach(p => p.draw()); 
+
+            if (gameRunning) {
+                requestAnimationFrame(gameLoop);
+            }
+        }
+
+        // Start the game when the window loads
+        window.onload = initializeGame;
+    </script>
+
+</body>
+</html>
